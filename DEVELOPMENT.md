@@ -8,6 +8,14 @@ Two folders, each with one job, connected by one script. That's the whole thing.
   SvelteKit app           into this repo        Chromium fork + patches                   separate process (later)
 ```
 
+## Repos
+
+- **`stead`** (this one) — the browser. https://github.com/judekim0507/stead
+- **`stead-ui`** — the Svelte UI source (`../ui`). https://github.com/judekim0507/stead-ui
+
+This repo vendors the *built* UI (`resources/stead/sidebar/`); `stead-ui` holds
+the *source*. Edit source in `stead-ui`, then sync (below) to bring the build here.
+
 ## Which folder do I edit?
 
 | To change…                                              | Edit in…                 | See it via…                          |
