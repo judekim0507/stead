@@ -27,9 +27,26 @@ hardcoded-URL fight.
   Stacks after Helium's `always-use-better-ntp.patch` (submodule), so it applies
   cleanly against the post-Helium tree.
 
+## Performance: prerendered, paints instantly
+
+A new tab is shown constantly, so it must not wait for the SPA to boot. The
+`/new-tab` route is **prerendered** to static HTML at build time
+(`ui/src/routes/new-tab/+page.ts` → `ssr=true; prerender=true`, overriding the
+app-wide `ssr=false`). The build emits `new-tab.html` containing the fully
+rendered UI, and `SteadNewTabUI` serves that as its **default resource**
+(`IDR_STEAD_SIDEBAR_NEW_TAB_HTML`, not the blank `index.html` shell). So a new
+tab paints the real page with **zero JS**; the client only loads to hydrate it
+for interactivity. (The sidebar/chat surfaces stay client-rendered SPA — they
+open on user action, so instant-paint matters less; same prerender trick applies
+if wanted.)
+
+CSS is intentionally left as an external `<link>` (it's ~50KB Tailwind served
+from the local pak — inlining it would bloat the HTML for a near-zero gain on a
+no-network resource). Revisit only if profiling says so.
+
 ## Notes
 - Reuses the shared `stead_sidebar_resources.pak` (the SPA has every route) — no
-  new bundle, **no UI rebuild**.
+  new bundle.
 - Chrome's `NewTabPageUIConfig` is intentionally left registered (lots of code
   references `chrome://new-tab-page`); it's just never reached for a new tab. If
   you later want `chrome://new-tab-page` / `chrome://newtab` typed in the omnibox

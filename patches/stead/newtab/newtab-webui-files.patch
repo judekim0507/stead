@@ -38,7 +38,7 @@
 +#endif  // CHROME_BROWSER_UI_WEBUI_STEAD_NEWTAB_STEAD_NEWTAB_UI_H_
 --- /dev/null
 +++ b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,47 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -66,8 +66,10 @@
 +  content::WebUIDataSource* source =
 +      content::WebUIDataSource::CreateAndAdd(profile, chrome::kSteadNewTabHost);
 +
++  // Serve the PRERENDERED /new-tab page as the default resource, so a new tab
++  // paints the real UI instantly (zero JS) and the client just hydrates it.
 +  webui::SetupWebUIDataSource(source, base::make_span(kSteadSidebarResources),
-+                              IDR_STEAD_SIDEBAR_INDEX_HTML);
++                              IDR_STEAD_SIDEBAR_NEW_TAB_HTML);
 +
 +  source->OverrideContentSecurityPolicy(
 +      network::mojom::CSPDirectiveName::ScriptSrc,
