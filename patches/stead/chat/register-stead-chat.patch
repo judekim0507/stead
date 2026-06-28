@@ -1,0 +1,40 @@
+--- a/chrome/common/webui_url_constants.h
++++ b/chrome/common/webui_url_constants.h
+@@ -424,6 +424,8 @@
+     "chrome://read-later.top-chrome/";
+ inline constexpr char kSteadSidebarHost[] = "sidebar.top-chrome";
+ inline constexpr char kSteadSidebarURL[] = "chrome://sidebar.top-chrome/ai-sidebar";
++inline constexpr char kSteadChatHost[] = "chat";
++inline constexpr char kSteadChatURL[] = "chrome://chat/ai-chat";
+ inline constexpr char kChromeUISearchEngineChoiceHost[] =
+     "search-engine-choice";
+ inline constexpr char kChromeUISearchEngineChoiceURL[] =
+--- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
++++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+@@ -125,6 +125,7 @@
+ #include "chrome/browser/ui/webui/side_panel/history_clusters/history_clusters_side_panel_ui.h"
+ #include "chrome/browser/ui/webui/side_panel/reading_list/reading_list_ui.h"
+ #include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
++#include "chrome/browser/ui/webui/stead_chat/stead_chat_ui.h"
+ #include "chrome/browser/ui/webui/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_ui.h"
+ #include "chrome/browser/ui/webui/signin/sync_confirmation_ui.h"
+ #include "chrome/browser/ui/webui/suggest_internals/suggest_internals_ui.h"
+@@ -369,6 +370,7 @@
+   map.AddWebUIConfig(std::make_unique<ProfileInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<ReadingListUIConfig>());
+   map.AddWebUIConfig(std::make_unique<SteadSidebarUIConfig>());
++  map.AddWebUIConfig(std::make_unique<SteadChatUIConfig>());
+   map.AddWebUIConfig(std::make_unique<SearchEngineChoiceUIConfig>());
+   map.AddWebUIConfig(std::make_unique<settings::SettingsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<ShoppingInsightsSidePanelUIConfig>());
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1557,6 +1557,8 @@
+       "webui/side_panel/reading_list/reading_list_ui.h",
+       "webui/side_panel/stead_sidebar/stead_sidebar_ui.cc",
+       "webui/side_panel/stead_sidebar/stead_sidebar_ui.h",
++      "webui/stead_chat/stead_chat_ui.cc",
++      "webui/stead_chat/stead_chat_ui.h",
+       "webui/side_panel/tabs_from_other_devices/synced_screenshot_data_source.cc",
+       "webui/side_panel/tabs_from_other_devices/synced_screenshot_data_source.h",
+       "webui/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_ui.cc",

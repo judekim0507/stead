@@ -1,0 +1,90 @@
+--- /dev/null
++++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h
+@@ -0,0 +1,35 @@
++// Copyright 2026 The Stead Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_STEAD_CHAT_STEAD_CHAT_UI_H_
++#define CHROME_BROWSER_UI_WEBUI_STEAD_CHAT_STEAD_CHAT_UI_H_
++
++#include "chrome/common/webui_url_constants.h"
++#include "content/public/browser/web_ui_controller.h"
++#include "content/public/browser/webui_config.h"
++#include "content/public/common/url_constants.h"
++
++class SteadChatUI;
++
++// Full-page WebUI config for the Stead chat surface (chrome://chat, shown as
++// stead://chat). A normal page/tab WebUI -- DefaultWebUIConfig, unlike the
++// side panel's TopChrome config.
++class SteadChatUIConfig : public content::DefaultWebUIConfig<SteadChatUI> {
++ public:
++  SteadChatUIConfig()
++      : DefaultWebUIConfig(content::kChromeUIScheme, chrome::kSteadChatHost) {}
++};
++
++// Full-page Stead chat. Serves the same SvelteKit SPA bundle as the sidebar
++// (stead_sidebar_resources.pak), opened at the /ai-chat route.
++class SteadChatUI : public content::WebUIController {
++ public:
++  explicit SteadChatUI(content::WebUI* web_ui);
++
++  SteadChatUI(const SteadChatUI&) = delete;
++  SteadChatUI& operator=(const SteadChatUI&) = delete;
++  ~SteadChatUI() override;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_STEAD_CHAT_STEAD_CHAT_UI_H_
+--- /dev/null
++++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
+@@ -0,0 +1,49 @@
++// Copyright 2026 The Stead Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/stead_chat/stead_chat_ui.h"
++
++#include "base/containers/span.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/webui_url_constants.h"
++// Reuses the shared Stead WebUI SPA bundle (same pak as the sidebar surface).
++#include "chrome/grit/stead_sidebar_resources.h"
++#include "chrome/grit/stead_sidebar_resources_map.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_ui.h"
++#include "content/public/browser/web_ui_data_source.h"
++#include "services/network/public/mojom/content_security_policy.mojom.h"
++#include "ui/webui/webui_util.h"
++
++SteadChatUI::SteadChatUI(content::WebUI* web_ui) : WebUIController(web_ui) {
++  content::BrowserContext* browser_context =
++      web_ui->GetWebContents()->GetBrowserContext();
++  Profile* profile = Profile::FromBrowserContext(browser_context);
++  content::WebUIDataSource* source =
++      content::WebUIDataSource::CreateAndAdd(profile, chrome::kSteadChatHost);
++
++  // index.html is the default resource, so the /ai-chat client route (and any
++  // other in-app route) falls back to the SPA shell and the SvelteKit router
++  // renders it.
++  webui::SetupWebUIDataSource(source, base::make_span(kSteadSidebarResources),
++                              IDR_STEAD_SIDEBAR_INDEX_HTML);
++
++  // Same relaxations the sidebar needs: SvelteKit's inline bootstrap script +
++  // inline style="" attributes, and Svelte's innerHTML hydration.
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ScriptSrc,
++      "script-src chrome://resources 'self' 'unsafe-inline';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::StyleSrc,
++      "style-src 'self' 'unsafe-inline';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::FontSrc, "font-src 'self';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ImgSrc,
++      "img-src 'self' data: chrome://resources chrome://theme;");
++  source->DisableTrustedTypesCSP();
++}
++
++SteadChatUI::~SteadChatUI() = default;
