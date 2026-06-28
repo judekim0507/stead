@@ -30,3 +30,7 @@ stead/sidebar/pin-ask-stead-by-default.patch
 
 stead/chat/chat-webui-files.patch
 stead/chat/register-stead-chat.patch
+
+stead/newtab/newtab-webui-files.patch
+stead/newtab/register-stead-newtab.patch
+stead/newtab/newtab-ntp-redirect.patch

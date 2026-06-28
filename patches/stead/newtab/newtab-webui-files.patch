@@ -1,0 +1,86 @@
+--- /dev/null
++++ b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h
+@@ -0,0 +1,35 @@
++// Copyright 2026 The Stead Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_STEAD_NEWTAB_STEAD_NEWTAB_UI_H_
++#define CHROME_BROWSER_UI_WEBUI_STEAD_NEWTAB_STEAD_NEWTAB_UI_H_
++
++#include "chrome/common/webui_url_constants.h"
++#include "content/public/browser/web_ui_controller.h"
++#include "content/public/browser/webui_config.h"
++#include "content/public/common/url_constants.h"
++
++class SteadNewTabUI;
++
++// Stead's new tab page. search.cc points the browser's new-tab URL here
++// (replacing Chrome's NTP), and because GetNewTabPageURL() returns this URL,
++// it is recognized as the NTP (empty omnibox etc.).
++class SteadNewTabUIConfig : public content::DefaultWebUIConfig<SteadNewTabUI> {
++ public:
++  SteadNewTabUIConfig()
++      : DefaultWebUIConfig(content::kChromeUIScheme,
++                           chrome::kSteadNewTabHost) {}
++};
++
++// Serves the shared Stead WebUI SPA bundle, opened at the /new-tab route.
++class SteadNewTabUI : public content::WebUIController {
++ public:
++  explicit SteadNewTabUI(content::WebUI* web_ui);
++
++  SteadNewTabUI(const SteadNewTabUI&) = delete;
++  SteadNewTabUI& operator=(const SteadNewTabUI&) = delete;
++  ~SteadNewTabUI() override;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_STEAD_NEWTAB_STEAD_NEWTAB_UI_H_
+--- /dev/null
++++ b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc
+@@ -0,0 +1,45 @@
++// Copyright 2026 The Stead Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h"
++
++#include "base/containers/span.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/webui_url_constants.h"
++// Reuses the shared Stead WebUI SPA bundle (same pak as the sidebar/chat).
++#include "chrome/grit/stead_sidebar_resources.h"
++#include "chrome/grit/stead_sidebar_resources_map.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_ui.h"
++#include "content/public/browser/web_ui_data_source.h"
++#include "services/network/public/mojom/content_security_policy.mojom.h"
++#include "ui/webui/webui_util.h"
++
++SteadNewTabUI::SteadNewTabUI(content::WebUI* web_ui)
++    : WebUIController(web_ui) {
++  content::BrowserContext* browser_context =
++      web_ui->GetWebContents()->GetBrowserContext();
++  Profile* profile = Profile::FromBrowserContext(browser_context);
++  content::WebUIDataSource* source =
++      content::WebUIDataSource::CreateAndAdd(profile, chrome::kSteadNewTabHost);
++
++  webui::SetupWebUIDataSource(source, base::make_span(kSteadSidebarResources),
++                              IDR_STEAD_SIDEBAR_INDEX_HTML);
++
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ScriptSrc,
++      "script-src chrome://resources 'self' 'unsafe-inline';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::StyleSrc,
++      "style-src 'self' 'unsafe-inline';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::FontSrc, "font-src 'self';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ImgSrc,
++      "img-src 'self' data: chrome://resources chrome://theme;");
++  source->DisableTrustedTypesCSP();
++}
++
++SteadNewTabUI::~SteadNewTabUI() = default;
