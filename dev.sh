@@ -121,7 +121,7 @@ ___helium_reset() {
 
 ___helium_name_substitution() {
     if [ "$1" = "nameunsub" ]; then
-        python3 "$_main_repo/utils/name_substitution.py" --unsub \
+        python3 "$_root_dir/devutils/stead_name_substitution.py" --unsub \
             -t "$_src_dir" --backup-path "$_namesubs_cache"
     elif [ "$1" = "namesub" ]; then
         if [ -f "$_namesubs_cache" ]; then
@@ -130,7 +130,7 @@ ___helium_name_substitution() {
             return
         fi
 
-        python3 "$_main_repo/utils/name_substitution.py" --sub \
+        python3 "$_root_dir/devutils/stead_name_substitution.py" --sub \
             -t "$_src_dir" --backup-path "$_namesubs_cache"
     else
         echo "unknown action: $1" >&2
