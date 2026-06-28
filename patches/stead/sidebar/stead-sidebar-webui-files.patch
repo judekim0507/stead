@@ -1,0 +1,130 @@
+--- /dev/null
++++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
+@@ -0,0 +1,46 @@
++// Copyright 2026 The Stead Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_UI_H_
++#define CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_UI_H_
++
++#include <string_view>
++
++#include "chrome/browser/ui/webui/top_chrome/top_chrome_web_ui_controller.h"
++#include "chrome/browser/ui/webui/top_chrome/top_chrome_webui_config.h"
++#include "chrome/common/webui_url_constants.h"
++#include "content/public/browser/web_ui_controller.h"
++#include "content/public/common/url_constants.h"
++
++class SteadSidebarUI;
++
++// Top Chrome WebUI config for the Stead agent side panel. The host carries the
++// ".top-chrome" suffix that the side-panel contents wrapper expects.
++class SteadSidebarUIConfig
++    : public DefaultTopChromeWebUIConfig<SteadSidebarUI> {
++ public:
++  SteadSidebarUIConfig()
++      : DefaultTopChromeWebUIConfig(content::kChromeUIScheme,
++                                    chrome::kSteadSidebarHost) {}
++};
++
++// Hosts the Stead agent sidebar: a prebuilt SvelteKit SPA packed into
++// stead_sidebar_resources.pak and served from this WebUIController's data
++// source. A TopChromeWebUIController so it can live in the side panel via
++// WebUIContentsWrapperT (mirrors ReadingListUI).
++class SteadSidebarUI : public TopChromeWebUIController {
++ public:
++  explicit SteadSidebarUI(content::WebUI* web_ui);
++
++  SteadSidebarUI(const SteadSidebarUI&) = delete;
++  SteadSidebarUI& operator=(const SteadSidebarUI&) = delete;
++  ~SteadSidebarUI() override;
++
++  static constexpr std::string_view GetWebUIName() { return "SteadSidebar"; }
++
++ private:
++  WEB_UI_CONTROLLER_TYPE_DECL();
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_UI_H_
+--- /dev/null
++++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
+@@ -0,0 +1,50 @@
++// Copyright 2026 The Stead Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
++
++#include "base/containers/span.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/webui_url_constants.h"
++#include "chrome/grit/stead_sidebar_resources.h"
++#include "chrome/grit/stead_sidebar_resources_map.h"
++#include "content/public/browser/web_ui.h"
++#include "content/public/browser/web_ui_data_source.h"
++#include "services/network/public/mojom/content_security_policy.mojom.h"
++#include "ui/webui/webui_util.h"
++
++SteadSidebarUI::SteadSidebarUI(content::WebUI* web_ui)
++    : TopChromeWebUIController(web_ui) {
++  Profile* profile = Profile::FromWebUI(web_ui);
++  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
++      profile, chrome::kSteadSidebarHost);
++
++  // Packs index.html + the hashed _app/* assets, and makes index.html the
++  // default resource so any in-app route the side panel opens (e.g.
++  // /ai-sidebar) falls back to the SPA shell and SvelteKit's router renders it.
++  webui::SetupWebUIDataSource(source, base::make_span(kSteadSidebarResources),
++                              IDR_STEAD_SIDEBAR_INDEX_HTML);
++
++  // The SvelteKit shell bootstraps with an inline <script> and the app uses
++  // inline style="" attributes throughout. Relax the default (very strict)
++  // WebUI CSP for this trusted, first-party bundle.
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ScriptSrc,
++      "script-src chrome://resources 'self' 'unsafe-inline';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::StyleSrc,
++      "style-src 'self' 'unsafe-inline';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::FontSrc, "font-src 'self';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ImgSrc,
++      "img-src 'self' data: chrome://resources chrome://theme;");
++
++  // Svelte hydration assigns innerHTML; Trusted Types would reject it.
++  source->DisableTrustedTypesCSP();
++}
++
++SteadSidebarUI::~SteadSidebarUI() = default;
++
++WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)
+--- /dev/null
++++ b/chrome/browser/resources/stead_sidebar/BUILD.gn
+@@ -0,0 +1,25 @@
++# Copyright 2026 The Stead Authors
++# You can use, redistribute, and/or modify this source code under
++# the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++import("//tools/grit/grit_rule.gni")
++
++# Packs the prebuilt Stead sidebar SPA into stead_sidebar_resources.pak.
++#
++# The bundle (index.html + _app/*) and the stead_sidebar_resources.grd that
++# lists it are copied into this directory before `gn gen` by
++# resources/stead/install_sidebar_to_tree.sh (driven from build.sh / dev.sh).
++# Because the .grd and its hash-named inputs are generated, GN can't discover
++# them at analyze time.
++grit("resources") {
++  source = "stead_sidebar_resources.grd"
++  enable_input_discovery_for_gn_analyze = false
++  defines = []
++  outputs = [
++    "grit/stead_sidebar_resources.h",
++    "grit/stead_sidebar_resources_map.cc",
++    "grit/stead_sidebar_resources_map.h",
++    "stead_sidebar_resources.pak",
++  ]
++  output_dir = "$root_gen_dir/chrome"
++}

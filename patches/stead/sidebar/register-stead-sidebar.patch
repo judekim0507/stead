@@ -1,0 +1,73 @@
+--- a/chrome/common/webui_url_constants.h
++++ b/chrome/common/webui_url_constants.h
+@@ -422,6 +422,8 @@
+ inline constexpr char kChromeUIReadLaterHost[] = "read-later.top-chrome";
+ inline constexpr char kChromeUIReadLaterURL[] =
+     "chrome://read-later.top-chrome/";
++inline constexpr char kSteadSidebarHost[] = "sidebar.top-chrome";
++inline constexpr char kSteadSidebarURL[] = "chrome://sidebar.top-chrome/ai-sidebar";
+ inline constexpr char kChromeUISearchEngineChoiceHost[] =
+     "search-engine-choice";
+ inline constexpr char kChromeUISearchEngineChoiceURL[] =
+--- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
++++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+@@ -124,6 +124,7 @@
+ #include "chrome/browser/ui/webui/side_panel/history/history_side_panel_ui.h"
+ #include "chrome/browser/ui/webui/side_panel/history_clusters/history_clusters_side_panel_ui.h"
+ #include "chrome/browser/ui/webui/side_panel/reading_list/reading_list_ui.h"
++#include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
+ #include "chrome/browser/ui/webui/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_ui.h"
+ #include "chrome/browser/ui/webui/signin/sync_confirmation_ui.h"
+ #include "chrome/browser/ui/webui/suggest_internals/suggest_internals_ui.h"
+@@ -367,6 +368,7 @@
+       std::make_unique<private_ai::PrivateAiInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<ProfileInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<ReadingListUIConfig>());
++  map.AddWebUIConfig(std::make_unique<SteadSidebarUIConfig>());
+   map.AddWebUIConfig(std::make_unique<SearchEngineChoiceUIConfig>());
+   map.AddWebUIConfig(std::make_unique<settings::SettingsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<ShoppingInsightsSidePanelUIConfig>());
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1555,6 +1555,8 @@
+       "webui/side_panel/reading_list/reading_list_page_handler.h",
+       "webui/side_panel/reading_list/reading_list_ui.cc",
+       "webui/side_panel/reading_list/reading_list_ui.h",
++      "webui/side_panel/stead_sidebar/stead_sidebar_ui.cc",
++      "webui/side_panel/stead_sidebar/stead_sidebar_ui.h",
+       "webui/side_panel/tabs_from_other_devices/synced_screenshot_data_source.cc",
+       "webui/side_panel/tabs_from_other_devices/synced_screenshot_data_source.h",
+       "webui/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_ui.cc",
+--- a/chrome/chrome_paks.gni
++++ b/chrome/chrome_paks.gni
+@@ -247,6 +247,7 @@
+         "$root_gen_dir/chrome/side_panel_history_resources.pak",
+         "$root_gen_dir/chrome/side_panel_read_anything_resources.pak",
+         "$root_gen_dir/chrome/side_panel_reading_list_resources.pak",
++        "$root_gen_dir/chrome/stead_sidebar_resources.pak",
+         "$root_gen_dir/chrome/side_panel_shared_resources.pak",
+         "$root_gen_dir/chrome/side_panel_tabs_from_other_devices_resources.pak",
+         "$root_gen_dir/chrome/signin_resources.pak",
+@@ -277,6 +278,7 @@
+         "//chrome/browser/resources/lens/shared:resources",
+         "//chrome/browser/resources/search_engine_choice:resources",
+         "//chrome/browser/resources/side_panel/comments:resources",
++        "//chrome/browser/resources/stead_sidebar:resources",
+         "//chrome/browser/resources/tab_group_home:resources",
+         "//chrome/browser/resources/webnn_internals:resources",
+         "//chrome/browser/resources/webui_toolbar:resources",
+--- a/tools/gritsettings/resource_ids.spec
++++ b/tools/gritsettings/resource_ids.spec
+@@ -727,6 +727,12 @@
+   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/side_panel/reading_list/resources.grd": {
+     "META": {"sizes": {"includes": [15],}},
+     "includes": [4900],
++  },
++  # Stead sidebar WebUI. NOTE: grit validates this range at build time; if it
++  # collides, grit prints a free range to use here.
++  "chrome/browser/resources/stead_sidebar/stead_sidebar_resources.grd": {
++    "META": {"sizes": {"includes": [60]}},
++    "includes": [9500],
+   },
+   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/side_panel/shared/code_cache_resources.grd": {
+     "META": {"sizes": {"includes": [15],}},

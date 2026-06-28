@@ -1,0 +1,17 @@
+--- a/chrome/browser/ui/toolbar/toolbar_pref_names.cc
++++ b/chrome/browser/ui/toolbar/toolbar_pref_names.cc
+@@ -24,6 +24,14 @@
+     default_pinned_actions.Append(chrome_labs_action.value());
+   }
+ 
++  // Stead: pin the "Ask Stead" agent sidebar button to the toolbar by default.
++  // It reuses the reading-list side-panel action slot.
++  const std::optional<std::string>& ask_stead_action =
++      actions::ActionIdMap::ActionIdToString(kActionSidePanelShowReadingList);
++  if (ask_stead_action.has_value()) {
++    default_pinned_actions.Append(ask_stead_action.value());
++  }
++
+   if (features::HasTabSearchToolbarButton()) {
+     const std::optional<std::string>& tab_search_action =
+         actions::ActionIdMap::ActionIdToString(kActionTabSearch);

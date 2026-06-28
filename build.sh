@@ -49,10 +49,14 @@ python3 "$_main_repo/utils/helium_version.py" \
     --platform-tree "$_root_dir" \
     --chromium-tree "$_src_dir"
 
-# Generate and apply Helium resources
+# Generate and apply browser resources (from the helium-chromium tree + Stead platform resources)
 python3 "$_main_repo/utils/generate_resources.py" "$_main_repo/resources/generate_resources.txt" "$_main_repo/resources"
 python3 "$_main_repo/utils/replace_resources.py" "$_root_dir/resources/platform_resources.txt" "$_root_dir/resources" "$_src_dir"
 python3 "$_main_repo/utils/replace_resources.py" "$_main_repo/resources/helium_resources.txt" "$_main_repo/resources" "$_src_dir"
+
+# Install the prebuilt Stead sidebar WebUI bundle into the tree, where the
+# BUILD.gn added by patches/stead packs it into stead_sidebar_resources.pak.
+"$_root_dir/resources/stead/install_sidebar_to_tree.sh" "$_src_dir"
 
 # Set build flags
 cat "$_main_repo/flags.gn" "$_root_dir/flags.macos.gn" > "$_src_dir/out/Default/args.gn"

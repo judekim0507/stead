@@ -76,6 +76,7 @@ ___helium_resources() {
     python3 "$_main_repo/utils/generate_resources.py" "$_main_repo/resources/generate_resources.txt" "$_main_repo/resources"
     python3 "$_main_repo/utils/replace_resources.py" "$_root_dir/resources/platform_resources.txt" "$_root_dir/resources" "$_src_dir"
     python3 "$_main_repo/utils/replace_resources.py" "$_main_repo/resources/helium_resources.txt" "$_main_repo/resources" "$_src_dir"
+    "$_root_dir/resources/stead/install_sidebar_to_tree.sh" "$_src_dir"
 }
 
 ___helium_setup_presetup() {
@@ -178,8 +179,8 @@ ___helium_build() {
 }
 
 ___helium_run() {
-    "$_out_dir/Helium.app/Contents/MacOS/Helium" \
-    --user-data-dir="$HOME/Library/Application Support/net.imput.helium.dev" \
+    "$_out_dir/Stead.app/Contents/MacOS/Stead" \
+    --user-data-dir="$HOME/Library/Application Support/com.steadbrowser.app.dev" \
     --enable-ui-devtools \
     --use-mock-keychain \
     --disable-features=DialMediaRouteProvider
@@ -324,7 +325,7 @@ __helium_menu() {
             echo "\t         equivalent of: [presetup, merge, push, configure]" >&2
             echo "\tpresetup - downloads sources, sets up GN, and prepares third-party dependencies" >&2
             echo "\tconfigure - generates build configuration and tools" >&2
-            echo "\tresources - generates and copies helium resources (such as icons)" >&2
+            echo "\tresources - generates and copies Stead resources (such as icons)" >&2
 
             echo "\n" >&2
             echo "\tsub - apply google domain and name substitutions" >&2
@@ -351,7 +352,7 @@ __helium_menu() {
 
             echo "\n" >&2
             echo "\tbuild - builds a development binary" >&2
-            echo "\trun - runs a development build of helium with dev data dir & ui devtools enabled" >&2
+            echo "\trun - runs a development build of Stead with dev data dir & ui devtools enabled" >&2
             echo "\treset - nukes everything" >&2
     esac
 }

@@ -1,0 +1,115 @@
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/stead_sidebar/stead_sidebar_side_panel_web_view.h
+@@ -0,0 +1,35 @@
++// Copyright 2026 The Stead Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_SIDE_PANEL_WEB_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_SIDE_PANEL_WEB_VIEW_H_
++
++#include "base/functional/callback_forward.h"
++#include "chrome/browser/ui/views/side_panel/side_panel_web_ui_view.h"
++#include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++
++class Profile;
++class SidePanelEntryScope;
++
++// Side panel container that hosts the Stead agent sidebar WebUI
++// (chrome://sidebar). Mirrors ReadLaterSidePanelWebView but without the
++// reading-list/tab-strip plumbing, since the Stead UI manages its own state.
++class SteadSidebarSidePanelWebView
++    : public SidePanelWebUIViewT<SteadSidebarUI> {
++  using SidePanelWebUIViewT_SteadSidebarUI = SidePanelWebUIViewT<SteadSidebarUI>;
++  METADATA_HEADER(SteadSidebarSidePanelWebView,
++                  SidePanelWebUIViewT_SteadSidebarUI)
++
++ public:
++  SteadSidebarSidePanelWebView(Profile* profile,
++                               SidePanelEntryScope& scope,
++                               base::RepeatingClosure close_cb);
++  SteadSidebarSidePanelWebView(const SteadSidebarSidePanelWebView&) = delete;
++  SteadSidebarSidePanelWebView& operator=(
++      const SteadSidebarSidePanelWebView&) = delete;
++  ~SteadSidebarSidePanelWebView() override;
++};
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_SIDE_PANEL_WEB_VIEW_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/side_panel/stead_sidebar/stead_sidebar_side_panel_web_view.cc
+@@ -0,0 +1,40 @@
++// Copyright 2026 The Stead Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/side_panel/stead_sidebar/stead_sidebar_side_panel_web_view.h"
++
++#include <memory>
++
++#include "base/functional/callback_helpers.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/webui/top_chrome/webui_contents_wrapper.h"
++#include "chrome/common/webui_url_constants.h"
++#include "chrome/grit/generated_resources.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "url/gurl.h"
++
++using SidePanelWebUIViewT_SteadSidebarUI = SidePanelWebUIViewT<SteadSidebarUI>;
++BEGIN_TEMPLATE_METADATA(SidePanelWebUIViewT_SteadSidebarUI, SidePanelWebUIViewT)
++END_METADATA
++
++SteadSidebarSidePanelWebView::SteadSidebarSidePanelWebView(
++    Profile* profile,
++    SidePanelEntryScope& scope,
++    base::RepeatingClosure close_cb)
++    : SidePanelWebUIViewT(
++          scope,
++          // No per-tab URL syncing; the Stead UI drives itself.
++          base::DoNothing(),
++          close_cb,
++          std::make_unique<WebUIContentsWrapperT<SteadSidebarUI>>(
++              GURL(chrome::kSteadSidebarURL),
++              profile,
++              // "Ask Stead" (added in patches/stead/sidebar/ask-stead-button).
++              IDS_STEAD_SIDEBAR_TITLE,
++              /*esc_closes_ui=*/false)) {}
++
++SteadSidebarSidePanelWebView::~SteadSidebarSidePanelWebView() = default;
++
++BEGIN_METADATA(SteadSidebarSidePanelWebView)
++END_METADATA
+--- a/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.cc
++++ b/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.cc
+@@ -14,15 +14,17 @@
+ #include "chrome/browser/ui/side_panel/side_panel_entry.h"
+ #include "chrome/browser/ui/side_panel/side_panel_registry.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+-#include "chrome/browser/ui/views/side_panel/reading_list/read_later_side_panel_web_view.h"
++#include "chrome/browser/ui/views/side_panel/stead_sidebar/stead_sidebar_side_panel_web_view.h"
+ 
+ namespace {
+ std::unique_ptr<views::View> CreateReadingListWebView(
+     Profile* profile,
+     TabStripModel* tab_strip_model,
+     SidePanelEntryScope& scope) {
+-  return std::make_unique<ReadLaterSidePanelWebView>(
+-      profile, tab_strip_model, scope, base::RepeatingClosure());
++  // Stead repurposes the reading-list side-panel slot to host the agent
++  // sidebar WebUI (chrome://sidebar). tab_strip_model is intentionally unused.
++  return std::make_unique<SteadSidebarSidePanelWebView>(
++      profile, scope, base::RepeatingClosure());
+ }
+ }  // namespace
+ 
+--- a/chrome/browser/ui/views/side_panel/BUILD.gn
++++ b/chrome/browser/ui/views/side_panel/BUILD.gn
+@@ -37,6 +37,8 @@
+     "reading_list/read_later_side_panel_web_view.cc",
+     "reading_list/read_later_side_panel_web_view.h",
+     "reading_list/reading_list_side_panel_coordinator.cc",
+     "reading_list/reading_list_side_panel_coordinator.h",
++    "stead_sidebar/stead_sidebar_side_panel_web_view.cc",
++    "stead_sidebar/stead_sidebar_side_panel_web_view.h",
+     "side_panel.cc",
+     "side_panel.h",

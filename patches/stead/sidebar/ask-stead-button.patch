@@ -1,0 +1,26 @@
+--- a/chrome/browser/ui/browser_actions.cc
++++ b/chrome/browser/ui/browser_actions.cc
+@@ -266,8 +266,8 @@
+                       kActionSidePanelShowBookmarks, bwi, true)
+           .Build());
+   root_action_item_->AddChild(
+-      SidePanelAction(SidePanelEntryId::kReadingList, IDS_READ_LATER_TITLE,
+-                      IDS_READ_LATER_TITLE, kReadingListIcon,
++      SidePanelAction(SidePanelEntryId::kReadingList, IDS_STEAD_SIDEBAR_TITLE,
++                      IDS_STEAD_SIDEBAR_TITLE, vector_icons::kChatIcon,
+                       kActionSidePanelShowReadingList, bwi, true)
+           .Build());
+   if (TabsFromOtherDevicesSidePanelCoordinator::IsSupported(profile)) {
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -9270,6 +9270,10 @@
+           Reading list
+         </message>
+       </if>
++      <!-- Stead agent sidebar -->
++      <message name="IDS_STEAD_SIDEBAR_TITLE" desc="Label for the Stead AI sidebar side-panel button (replaces the reading list slot).">
++        Ask Stead
++      </message>
+       <message name="IDS_READ_LATER_EXPAND_BUTTON_ARIA_LABEL" desc="Aria label for the Read later list expand button.">
+         Expand <ph name="HEADER">$1<ex>Unread</ex></ph>
+       </message>
