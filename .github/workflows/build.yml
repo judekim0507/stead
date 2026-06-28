@@ -1,4 +1,4 @@
-name: Build macOS binaries of Helium
+name: Build macOS binaries of Stead
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build:
-    name: Build macOS binaries of Helium
+    name: Build macOS binaries of Stead
     strategy:
       matrix:
         arch: [arm64, x86_64]
@@ -31,7 +31,7 @@ jobs:
 
   release:
     needs: build
-    name: Release macOS binaries of Helium
+    name: Release macOS binaries of Stead
     runs-on: ${{ inputs.runner }}
     if: ${{ inputs.do-release }}
     steps:
@@ -70,7 +70,7 @@ jobs:
             find ./release_asset/ -name '*.delta'
             echo EOF
           } >> "$GITHUB_OUTPUT"
-      - name: Release Helium binaries
+      - name: Release Stead binaries
         uses: imputnet/action-gh-release@v2.5
         with:
           body_path: ./github_release_note.md

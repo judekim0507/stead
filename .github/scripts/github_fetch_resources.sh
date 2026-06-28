@@ -1,6 +1,6 @@
 #!/bin/bash -eux
 
-# Simple script for downloading and unpacking required resources to build Helium macOS binaries on GitHub Actions
+# Simple script for downloading and unpacking required resources to build Stead macOS binaries on GitHub Actions
 
 _target_cpu="$1"
 

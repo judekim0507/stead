@@ -1,36 +1,39 @@
-# helium-macos
-macOS packaging & development tooling for the
-[Helium Browser](https://github.com/imputnet/helium).
+# stead-macos
+macOS packaging & development tooling for **Stead**, a performance-first
+agentic web browser.
+
+Stead is built as a Chromium fork. This repository forks
+[helium-macos](https://github.com/imputnet/helium-macos) and embeds the shared
+[Helium](https://github.com/imputnet/helium) patch tree as the `helium-chromium`
+git submodule. Stead's own changes live in this repo: branding and packaging are
+applied here, and Stead-specific Chromium patches are kept isolated in
+`patches/stead/` so they stay portable across upstream churn.
 
 ## Building and development
-macOS is our primary development platform, so it's the recommended environment
-for developing new Helium features.
+macOS is the primary development platform.
 
 [> See docs/building.md](docs/building.md)
 
-## Contributing
-Before contributing to this repo, please read the guidelines in the main repo's
-[CONTRIBUTING.md](https://github.com/imputnet/helium/blob/main/CONTRIBUTING.md).
-
 ## Credits
 
-### Depot
-Big thank you to [Depot](https://depot.dev/) for sponsoring our runners,
-which handle the macOS builds of Helium. Their high-performance infrastructure
-lets us compile, package, and release new builds of Helium within hours,
-not days.
+### Helium
+Stead is based on [Helium](https://github.com/imputnet/helium) and
+[helium-macos](https://github.com/imputnet/helium-macos) by imputnet. The
+`helium-chromium` submodule tracks the upstream Helium patch tree. Huge thanks
+to the Helium authors for the foundation this builds on.
 
 ### ungoogled-chromium-macos
-This repo is based on
-[ungoogled-chromium-macos](https://github.com/ungoogled-software/ungoogled-chromium-macos),
-but heavily modified for Helium. Special thanks to everyone behind
-ungoogled-chromium, they made working with Chromium infinitely easier.
+Helium's macOS tooling is in turn based on
+[ungoogled-chromium-macos](https://github.com/ungoogled-software/ungoogled-chromium-macos).
+Special thanks to everyone behind ungoogled-chromium — they made working with
+Chromium infinitely easier.
 
 ## License
-All code, patches, modified portions of imported code or patches, and
-any other content that is unique to Helium and not imported from other
+All code, patches, modified portions of imported code or patches, and any other
+content that is unique to this repository and not imported from other
 repositories is licensed under GPL-3.0. See [LICENSE](LICENSE).
 
-Any content imported from other projects retains its original license (for
-example, any original unmodified code imported from ungoogled-chromium remains
-licensed under their [BSD 3-Clause license](LICENSE.ungoogled_chromium)).
+Any content imported from other projects retains its original license. Content
+imported from Helium remains under GPL-3.0, and any original unmodified code
+imported from ungoogled-chromium remains licensed under their
+[BSD 3-Clause license](LICENSE.ungoogled_chromium).

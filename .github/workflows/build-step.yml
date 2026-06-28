@@ -1,4 +1,4 @@
-name: Continue building macOS binaries of Helium
+name: Continue building macOS binaries of Stead
 
 defaults:
   run:
@@ -22,7 +22,7 @@ on:
 
 jobs:
   build_job:
-    name: Resuming Building Helium for macOS
+    name: Resuming Building Stead for macOS
     runs-on: ${{ inputs.os }}
     outputs:
       status: ${{ steps.build.outputs.status }}

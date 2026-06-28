@@ -1,6 +1,6 @@
 #!/bin/bash -eux
 
-# Simple script for getting ready to build Helium macOS binaries on GitHub Actions
+# Simple script for getting ready to build Stead macOS binaries on GitHub Actions
 
 _target_cpu="$1"
 

@@ -11,7 +11,7 @@
 -#else
 -      product_dir_name = "Chromium";
 -#endif
-+      product_dir_name = "net.imput.helium";
++      product_dir_name = "com.steadbrowser.app";
      }
  
      // Leaked, but the only caller initializes a static with this result, so it

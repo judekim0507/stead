@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug building or running Helium
+description: Report a bug building or running Stead
 labels: ["bug"]
 title: "[Bug]: "
 body:
@@ -16,7 +16,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Can be copied from helium://settings/help
+      description: Can be copied from stead://settings/help
     validations:
       required: true
   - type: checkboxes
@@ -25,7 +25,7 @@ body:
       options:
         - label: I have tried reproducing this issue in Chrome and it could not be reproduced there
         - label: I have tried reproducing this issue in ungoogled-chromium and it could not be reproduced there
-        - label: I have tried reproducing this issue in Helium with a new and empty profile using `--user-data-dir` command line argument and it could not be reproduced there
+        - label: I have tried reproducing this issue in Stead with a new and empty profile using `--user-data-dir` command line argument and it could not be reproduced there
   - type: input
     id: description
     attributes:

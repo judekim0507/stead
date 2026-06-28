@@ -17,13 +17,13 @@
 	<key>com.apple.security.personal-information.photos-library</key>
 	<true/>
 	<key>com.apple.application-identifier</key>
-	<string>${CHROMIUM_TEAM_ID}.net.imput.helium</string>
+	<string>${CHROMIUM_TEAM_ID}.com.steadbrowser.app</string>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>${CHROMIUM_TEAM_ID}.net.imput.helium.devicetrust</string>
-		<string>${CHROMIUM_TEAM_ID}.net.imput.helium.unexportable-keys</string>
-		<string>${CHROMIUM_TEAM_ID}.net.imput.helium.webauthn</string>
-		<string>${CHROMIUM_TEAM_ID}.net.imput.helium.webauthn-uvk</string>
+		<string>${CHROMIUM_TEAM_ID}.com.steadbrowser.app.devicetrust</string>
+		<string>${CHROMIUM_TEAM_ID}.com.steadbrowser.app.unexportable-keys</string>
+		<string>${CHROMIUM_TEAM_ID}.com.steadbrowser.app.webauthn</string>
+		<string>${CHROMIUM_TEAM_ID}.com.steadbrowser.app.webauthn-uvk</string>
 	</array>
 <!-- pending
 	<key>com.apple.developer.associated-domains.applinks.read-write</key>

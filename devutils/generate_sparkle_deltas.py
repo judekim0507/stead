@@ -29,7 +29,7 @@ def get_asset_url(release, arch):
 
 
 def get_historic_dmg_urls():
-  repo = os.environ.get('GITHUB_REPOSITORY', 'imputnet/helium-macos')
+  repo = os.environ.get('GITHUB_REPOSITORY', 'steadbrowser/stead-macos')
   response = requests.get(
     f'https://api.github.com/repos/{repo}/releases?per_page=5',
     headers=REQUEST_HEADERS,
@@ -79,7 +79,7 @@ def generate_delta_for(version, urls, args):
       print(f.name)
       with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d2:
         with mount(f.name, d1), mount(args[i], d2):
-          do_diff(d1 + '/Helium.app', d2 + '/Helium.app', f'{args[2]}/{version}-{arch}.delta')
+          do_diff(d1 + '/Stead.app', d2 + '/Stead.app', f'{args[2]}/{version}-{arch}.delta')
 
 
 if __name__ == '__main__':

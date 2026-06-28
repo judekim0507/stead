@@ -21,7 +21,7 @@ if [ "$1" = "sub" ]; then
     he sub
 
     cd "$_src_dir"
-    cat components/omnibox_strings.grdp | grep -q Helium
+    cat components/omnibox_strings.grdp | grep -q Stead
     exit 0
 fi
 

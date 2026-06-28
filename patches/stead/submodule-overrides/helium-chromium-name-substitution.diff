@@ -1,0 +1,50 @@
+diff --git a/utils/name_substitution.py b/utils/name_substitution.py
+index 924d07d4..be7f86b4 100755
+--- a/utils/name_substitution.py
++++ b/utils/name_substitution.py
+@@ -21,16 +21,18 @@ IGNORE_DIRS = ['.pc', 'chromeos', 'remoting', 'ash', 'android', 'ios', 'testdata
+ def replacement_sanity():
+     """Sanity check to ensure replacement regexes are working as intended"""
+     before_after = [
+-        ('chrome://about', 'helium://about'),
++        ('chrome://about', 'stead://about'),
+         ('Chrome Root Program', 'Chrome Root Program'),
+-        (' Chrome  ', ' Helium  '),
++        (' Chrome  ', ' Stead  '),
+         ('Chrome Web Store', 'Chrome Web Store'),
+         ('Chromium Web Store', 'Chromium Web Store'),
+         ('Chrome Remote Desktop', 'Chrome Remote Desktop'),
+-        ('Google Chrome', 'Helium'),
+-        ('Chrome Google Chrome Chrome Chromium', 'Helium Helium Helium Helium'),
+-        ('Chrome', 'Helium'),
+-        ('Chromium', 'Helium'),
++        ('Google Chrome', 'Stead'),
++        ('Chrome Google Chrome Chrome Chromium', 'Stead Stead Stead Stead'),
++        ('Chrome', 'Stead'),
++        ('Chromium', 'Stead'),
++        ('helium://about', 'stead://about'),
++        ('Helium services', 'Stead services'),
+     ]
+ 
+     for source, expected in before_after:
+diff --git a/utils/name_substitution_utils.py b/utils/name_substitution_utils.py
+index b676a672..bd441d15 100644
+--- a/utils/name_substitution_utils.py
++++ b/utils/name_substitution_utils.py
+@@ -13,9 +13,13 @@ REPLACEMENT_REGEXES_STR = [
+     (r'(\w+) Web( S|s)tore', r'\1_unreplace Web Store'),
+     (r'(\w+) Remote Desktop', r'\1_unreplace Remote Desktop'),
+ 
+-    # main replacement(s)
+-    (r'(\b)chrome://', r'\1helium://'),
+-    (r'(?:Google )?Chrom(e|ium)(?!\w)', r'Helium'),
++    # main replacement(s): Chromium-origin names -> Stead
++    (r'(\b)chrome://', r'\1stead://'),
++    (r'(?:Google )?Chrom(e|ium)(?!\w)', r'Stead'),
++
++    # Helium-origin names (inherited from the upstream Helium patch tree) -> Stead
++    (r'(\b)helium://', r'\1stead://'),
++    (r'Helium', r'Stead'),
+ 
+     # post-replacement cleanup
+     (r'((?:Google )?Chrom(e|ium))_unreplace', r'\1'),

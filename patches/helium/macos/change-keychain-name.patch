@@ -11,8 +11,8 @@
 -const char kDefaultServiceName[] = "Chromium Safe Storage";
 -const char kDefaultAccountName[] = "Chromium";
 -#endif
-+const char kDefaultServiceName[] = "Helium Storage Key";
-+const char kDefaultAccountName[] = "Helium";
++const char kDefaultServiceName[] = "Stead Storage Key";
++const char kDefaultAccountName[] = "Stead";
  
  // These values are persisted to logs. Entries should not be renumbered and
  // numeric values should never be reused.

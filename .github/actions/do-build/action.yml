@@ -1,4 +1,4 @@
-name: Build Helium
+name: Build Stead
 inputs:
   arch:
     required: true

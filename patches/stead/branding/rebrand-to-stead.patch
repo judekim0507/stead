@@ -1,0 +1,22 @@
+--- a/chrome/app/theme/chromium/BRANDING
++++ b/chrome/app/theme/chromium/BRANDING
+@@ -1,10 +1,10 @@
+-COMPANY_FULLNAME=The Helium Authors
+-COMPANY_SHORTNAME=The Helium Authors
+-PRODUCT_FULLNAME=Helium
+-PRODUCT_SHORTNAME=Helium
+-PRODUCT_INSTALLER_FULLNAME=Helium Installer
+-PRODUCT_INSTALLER_SHORTNAME=Helium Installer
+-COPYRIGHT=Copyright @LASTCHANGE_YEAR@ The Helium Authors. All rights reserved.
+-MAC_BUNDLE_ID=net.imput.helium
++COMPANY_FULLNAME=Bytea
++COMPANY_SHORTNAME=Bytea
++PRODUCT_FULLNAME=Stead
++PRODUCT_SHORTNAME=Stead
++PRODUCT_INSTALLER_FULLNAME=Stead Installer
++PRODUCT_INSTALLER_SHORTNAME=Stead Installer
++COPYRIGHT=Copyright @LASTCHANGE_YEAR@ Bytea. All rights reserved.
++MAC_BUNDLE_ID=com.steadbrowser.app
+ MAC_CREATOR_CODE=Cr24
+-MAC_TEAM_ID=S4Q33XPHB4
++MAC_TEAM_ID=

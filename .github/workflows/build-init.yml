@@ -1,4 +1,4 @@
-name: Start Building Helium for macOS
+name: Start Building Stead for macOS
 
 defaults:
   run:
@@ -22,7 +22,7 @@ on:
 
 jobs:
   build_job:
-    name: Start Building Helium for macOS
+    name: Start Building Stead for macOS
     runs-on: ${{ inputs.os }}
     outputs:
       status: ${{ steps.build.outputs.status }}
@@ -35,7 +35,7 @@ jobs:
       - name: Download resources
         uses: actions/download-artifact@v4
         with:
-          name: helium_macos_resources_${{ inputs.arch }}
+          name: stead_macos_resources_${{ inputs.arch }}
       - name: Unpack resources
         run: ./github_unpack_resources.sh && ls -la
       - name: Prepare for building

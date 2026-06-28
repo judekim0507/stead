@@ -1,4 +1,4 @@
-name: Building macOS binaries of Helium
+name: Building macOS binaries of Stead
 
 defaults:
   run:
@@ -36,7 +36,7 @@ jobs:
       - name: Upload resources
         uses: actions/upload-artifact@v4
         with:
-          name: helium_macos_resources_${{ inputs.arch }}
+          name: stead_macos_resources_${{ inputs.arch }}
           path: upload_build_resources/
 
   build_job_01:
