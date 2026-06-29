@@ -253,7 +253,7 @@ new file mode 100644
 index 0000000000000..7a3e021c74dab
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
-@@ -0,0 +1,922 @@
+@@ -0,0 +1,992 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -378,14 +378,20 @@ index 0000000000000..7a3e021c74dab
 +
 +  PrivateBrowserControl(const PrivateBrowserControl&) = delete;
 +  PrivateBrowserControl& operator=(const PrivateBrowserControl&) = delete;
-+  ~PrivateBrowserControl() = default;
++  ~PrivateBrowserControl();
 +
++  std::vector<mojom::TabInfoPtr> ListTabs();
++  void GetSnapshot(int32_t tab_id,
++                   int32_t action_id,
++                   mojom::SnapshotOptionsPtr options,
++                   SteadAgentControlService::GetSnapshotCallback callback);
++  content::WebContents* FindTabById(int32_t tab_id);
 +  mojom::ActionResultPtr DispatchAccessibilityAction(
 +      const mojom::NodeRef& ref,
 +      int32_t action_id,
 +      ax::mojom::Action action,
 +      const std::string& value) {
-+    content::WebContents* web_contents = broker_->FindTabById(ref.frame->tab_id);
++    content::WebContents* web_contents = FindTabById(ref.frame->tab_id);
 +    if (!web_contents) {
 +      return broker_->MakeResult(action_id, false, kTabMissing,
 +                                 "Tab was not found.",
@@ -394,33 +400,33 @@ index 0000000000000..7a3e021c74dab
 +                                 /*target_missing=*/true);
 +    }
 +
-+    if (broker_->IsStaleFrame(*ref.frame, web_contents)) {
++    if (IsStaleFrame(*ref.frame, web_contents)) {
 +      return broker_->MakeResult(
 +          action_id, false, kStaleRef, "Target ref is from an old snapshot.",
 +          /*stale=*/true, /*needs_snapshot=*/true,
 +          /*needs_confirmation=*/false, /*target_missing=*/false,
 +          /*blocked_by=*/std::string(),
-+          broker_->CurrentSnapshotGeneration(ref.frame->tab_id));
++          CurrentSnapshotGeneration(ref.frame->tab_id));
 +    }
 +
-+    if (!broker_->SnapshotIndexContains(ref)) {
++    if (!SnapshotIndexContains(ref)) {
 +      return broker_->MakeResult(
 +          action_id, false, kTargetMissing,
 +          "Target node is not present in the latest snapshot.",
 +          /*stale=*/false, /*needs_snapshot=*/true,
 +          /*needs_confirmation=*/false, /*target_missing=*/true,
 +          /*blocked_by=*/std::string(),
-+          broker_->CurrentSnapshotGeneration(ref.frame->tab_id));
++          CurrentSnapshotGeneration(ref.frame->tab_id));
 +    }
 +
-+    if (!broker_->CurrentTreeContainsNode(web_contents, ref)) {
++    if (!CurrentTreeContainsNode(web_contents, ref)) {
 +      return broker_->MakeResult(
 +          action_id, false, kTargetMissing,
 +          "Target node is not present in the current AX tree.",
 +          /*stale=*/false, /*needs_snapshot=*/true,
 +          /*needs_confirmation=*/false, /*target_missing=*/true,
 +          /*blocked_by=*/std::string(),
-+          broker_->CurrentSnapshotGeneration(ref.frame->tab_id));
++          CurrentSnapshotGeneration(ref.frame->tab_id));
 +    }
 +
 +    content::RenderFrameHost* frame = web_contents->GetPrimaryMainFrame();
@@ -431,8 +437,7 @@ index 0000000000000..7a3e021c74dab
 +                                 /*needs_confirmation=*/false,
 +                                 /*target_missing=*/true,
 +                                 /*blocked_by=*/std::string(),
-+                                 broker_->CurrentSnapshotGeneration(
-+                                     ref.frame->tab_id));
++                                 CurrentSnapshotGeneration(ref.frame->tab_id));
 +    }
 +
 +    ui::AXActionData action_data;
@@ -448,11 +453,43 @@ index 0000000000000..7a3e021c74dab
 +        /*stale=*/false, /*needs_snapshot=*/true,
 +        /*needs_confirmation=*/false, /*target_missing=*/false,
 +        /*blocked_by=*/std::string(),
-+        broker_->CurrentSnapshotGeneration(ref.frame->tab_id));
++        CurrentSnapshotGeneration(ref.frame->tab_id));
 +  }
++  void ClearTabState(int32_t tab_id);
++  void ForgetObservedTab(int32_t tab_id);
++  uint32_t CurrentSnapshotGeneration(int32_t tab_id) const;
 +
 + private:
++  void EnsureTabObserved(content::WebContents* web_contents, int32_t tab_id);
++  void EnsureAccessibilityMode(content::WebContents* web_contents,
++                               int32_t tab_id);
++  mojom::AxNodePtr BuildAxNode(const ui::AXTree& tree,
++                               ui::AXNode* node,
++                               int32_t tab_id,
++                               const std::string& frame_token,
++                               uint32_t generation,
++                               SnapshotBuildState* state) const;
++  void CompleteSnapshotFromUpdate(
++      int32_t tab_id,
++      int32_t action_id,
++      mojom::SnapshotOptionsPtr options,
++      base::TimeTicks start_time,
++      SteadAgentControlService::GetSnapshotCallback callback,
++      ui::AXTreeUpdate& update);
++  bool IsStaleFrame(const mojom::FrameRef& frame_ref,
++                    content::WebContents* web_contents) const;
++  bool SnapshotIndexContains(const mojom::NodeRef& ref) const;
++  bool CurrentTreeContainsNode(content::WebContents* web_contents,
++                               const mojom::NodeRef& ref) const;
++  uint32_t BumpSnapshotGeneration(int32_t tab_id);
++
 +  raw_ptr<SteadAgentControlService> broker_;
++  base::flat_map<int32_t, std::unique_ptr<content::ScopedAccessibilityMode>>
++      scoped_ax_modes_;
++  base::flat_map<int32_t, uint32_t> snapshot_generations_;
++  base::flat_map<int32_t, std::unique_ptr<ObservedTab>> observed_tabs_;
++  base::flat_map<int32_t, std::unique_ptr<SnapshotIndex>> snapshot_indexes_;
++  base::WeakPtrFactory<PrivateBrowserControl> weak_factory_{this};
 +};
 +
 +class SteadAgentControlService::ObservedTab
@@ -493,6 +530,9 @@ index 0000000000000..7a3e021c74dab
 +  raw_ptr<SteadAgentControlService> owner_;
 +  int32_t tab_id_;
 +};
++
++SteadAgentControlService::PrivateBrowserControl::~PrivateBrowserControl() =
++    default;
 +
 +SteadAgentControlService::SteadAgentControlService(Profile* profile)
 +    : profile_(profile),
@@ -570,10 +610,15 @@ index 0000000000000..7a3e021c74dab
 +}
 +
 +void SteadAgentControlService::ListTabs(ListTabsCallback callback) {
++  std::move(callback).Run(browser_control_->ListTabs());
++}
++
++std::vector<mojom::TabInfoPtr>
++SteadAgentControlService::PrivateBrowserControl::ListTabs() {
 +  std::vector<mojom::TabInfoPtr> tabs;
 +
 +  for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
-+    if (!window || !SameProfile(window->GetProfile(), profile_)) {
++    if (!window || !SameProfile(window->GetProfile(), broker_->profile_)) {
 +      continue;
 +    }
 +
@@ -607,24 +652,33 @@ index 0000000000000..7a3e021c74dab
 +    }
 +  }
 +
-+  std::move(callback).Run(std::move(tabs));
++  return tabs;
 +}
 +
 +void SteadAgentControlService::GetSnapshot(
 +    int32_t tab_id,
 +    mojom::SnapshotOptionsPtr options,
 +    GetSnapshotCallback callback) {
-+  const int32_t action_id = NextActionId();
++  browser_control_->GetSnapshot(tab_id, NextActionId(), std::move(options),
++                                std::move(callback));
++}
++
++void SteadAgentControlService::PrivateBrowserControl::GetSnapshot(
++    int32_t tab_id,
++    int32_t action_id,
++    mojom::SnapshotOptionsPtr options,
++    SteadAgentControlService::GetSnapshotCallback callback) {
 +  const base::TimeTicks start_time = base::TimeTicks::Now();
 +  content::WebContents* web_contents = FindTabById(tab_id);
 +  if (!web_contents) {
-+    FinishSnapshot(tab_id, std::move(callback),
-+                   MakeResult(action_id, false, kTabMissing,
-+                              "Tab was not found.",
-+                              /*stale=*/false, /*needs_snapshot=*/false,
-+                              /*needs_confirmation=*/false,
-+                              /*target_missing=*/true),
-+                   nullptr);
++    broker_->FinishSnapshot(
++        tab_id, std::move(callback),
++        broker_->MakeResult(action_id, false, kTabMissing,
++                            "Tab was not found.",
++                            /*stale=*/false, /*needs_snapshot=*/false,
++                            /*needs_confirmation=*/false,
++                            /*target_missing=*/true),
++        nullptr);
 +    return;
 +  }
 +
@@ -638,7 +692,7 @@ index 0000000000000..7a3e021c74dab
 +        options && options->max_nodes != 0 ? options->max_nodes
 +                                           : kDefaultMaxSnapshotNodes;
 +    web_contents->RequestAXTreeSnapshot(
-+        base::BindOnce(&SteadAgentControlService::CompleteSnapshotFromUpdate,
++        base::BindOnce(&PrivateBrowserControl::CompleteSnapshotFromUpdate,
 +                       weak_factory_.GetWeakPtr(), tab_id, action_id,
 +                       std::move(options), start_time, std::move(callback)),
 +        ui::kAXModeBasic, max_nodes, kColdSnapshotTimeout,
@@ -650,34 +704,36 @@ index 0000000000000..7a3e021c74dab
 +                             std::move(callback), update);
 +}
 +
-+void SteadAgentControlService::CompleteSnapshotFromUpdate(
++void SteadAgentControlService::PrivateBrowserControl::CompleteSnapshotFromUpdate(
 +    int32_t tab_id,
 +    int32_t action_id,
 +    mojom::SnapshotOptionsPtr options,
 +    base::TimeTicks start_time,
-+    GetSnapshotCallback callback,
++    SteadAgentControlService::GetSnapshotCallback callback,
 +    ui::AXTreeUpdate& update) {
 +  content::WebContents* web_contents = FindTabById(tab_id);
 +  if (!web_contents) {
-+    FinishSnapshot(tab_id, std::move(callback),
-+                   MakeResult(action_id, false, kTabMissing,
-+                              "Tab was not found.",
-+                              /*stale=*/false, /*needs_snapshot=*/false,
-+                              /*needs_confirmation=*/false,
-+                              /*target_missing=*/true),
-+                   nullptr);
++    broker_->FinishSnapshot(
++        tab_id, std::move(callback),
++        broker_->MakeResult(action_id, false, kTabMissing,
++                            "Tab was not found.",
++                            /*stale=*/false, /*needs_snapshot=*/false,
++                            /*needs_confirmation=*/false,
++                            /*target_missing=*/true),
++        nullptr);
 +    return;
 +  }
 +
 +  ui::AXTree tree;
 +  if (!tree.Unserialize(update) || !tree.root()) {
-+    FinishSnapshot(tab_id, std::move(callback),
-+                   MakeResult(action_id, false, kSnapshotUnavailable,
-+                              "Accessibility snapshot was unavailable.",
-+                              /*stale=*/false, /*needs_snapshot=*/true,
-+                              /*needs_confirmation=*/false,
-+                              /*target_missing=*/false),
-+                   nullptr);
++    broker_->FinishSnapshot(
++        tab_id, std::move(callback),
++        broker_->MakeResult(action_id, false, kSnapshotUnavailable,
++                            "Accessibility snapshot was unavailable.",
++                            /*stale=*/false, /*needs_snapshot=*/true,
++                            /*needs_confirmation=*/false,
++                            /*target_missing=*/false),
++        nullptr);
 +    return;
 +  }
 +
@@ -694,13 +750,14 @@ index 0000000000000..7a3e021c74dab
 +      BuildAxNode(tree, tree.root(), tab_id, frame_token, generation,
 +                  &build_state);
 +  if (!root) {
-+    FinishSnapshot(tab_id, std::move(callback),
-+                   MakeResult(action_id, false, kSnapshotUnavailable,
-+                              "Accessibility snapshot root was filtered out.",
-+                              /*stale=*/false, /*needs_snapshot=*/true,
-+                              /*needs_confirmation=*/false,
-+                              /*target_missing=*/false),
-+                   nullptr);
++    broker_->FinishSnapshot(
++        tab_id, std::move(callback),
++        broker_->MakeResult(action_id, false, kSnapshotUnavailable,
++                            "Accessibility snapshot root was filtered out.",
++                            /*stale=*/false, /*needs_snapshot=*/true,
++                            /*needs_confirmation=*/false,
++                            /*target_missing=*/false),
++        nullptr);
 +    return;
 +  }
 +
@@ -721,13 +778,14 @@ index 0000000000000..7a3e021c74dab
 +  snapshot_index->node_ids = std::move(build_state.node_ids);
 +  snapshot_indexes_[tab_id] = std::move(snapshot_index);
 +
-+  FinishSnapshot(tab_id, std::move(callback),
-+                 MakeResult(action_id, true, kOk, "Snapshot captured.",
-+                            /*stale=*/false, /*needs_snapshot=*/false,
-+                            /*needs_confirmation=*/false,
-+                            /*target_missing=*/false,
-+                            /*blocked_by=*/std::string(), generation),
-+                 std::move(snapshot));
++  broker_->FinishSnapshot(
++      tab_id, std::move(callback),
++      broker_->MakeResult(action_id, true, kOk, "Snapshot captured.",
++                          /*stale=*/false, /*needs_snapshot=*/false,
++                          /*needs_confirmation=*/false,
++                          /*target_missing=*/false,
++                          /*blocked_by=*/std::string(), generation),
++      std::move(snapshot));
 +}
 +
 +void SteadAgentControlService::FinishSnapshot(
@@ -765,9 +823,10 @@ index 0000000000000..7a3e021c74dab
 +      std::move(ref), ax::mojom::Action::kScrollToMakeVisible));
 +}
 +
-+content::WebContents* SteadAgentControlService::FindTabById(int32_t tab_id) {
++content::WebContents*
++SteadAgentControlService::PrivateBrowserControl::FindTabById(int32_t tab_id) {
 +  for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
-+    if (!window || !SameProfile(window->GetProfile(), profile_)) {
++    if (!window || !SameProfile(window->GetProfile(), broker_->profile_)) {
 +      continue;
 +    }
 +
@@ -794,7 +853,7 @@ index 0000000000000..7a3e021c74dab
 +  return nullptr;
 +}
 +
-+void SteadAgentControlService::EnsureTabObserved(
++void SteadAgentControlService::PrivateBrowserControl::EnsureTabObserved(
 +    content::WebContents* web_contents,
 +    int32_t tab_id) {
 +  if (!web_contents) {
@@ -808,7 +867,7 @@ index 0000000000000..7a3e021c74dab
 +  EnsureAccessibilityMode(web_contents, tab_id);
 +}
 +
-+void SteadAgentControlService::EnsureAccessibilityMode(
++void SteadAgentControlService::PrivateBrowserControl::EnsureAccessibilityMode(
 +    content::WebContents* web_contents,
 +    int32_t tab_id) {
 +  if (!web_contents || scoped_ax_modes_.contains(tab_id)) {
@@ -820,7 +879,19 @@ index 0000000000000..7a3e021c74dab
 +          ->CreateScopedModeForWebContents(web_contents, ui::kAXModeBasic);
 +}
 +
-+mojom::AxNodePtr SteadAgentControlService::BuildAxNode(
++void SteadAgentControlService::PrivateBrowserControl::ClearTabState(
++    int32_t tab_id) {
++  snapshot_generations_.erase(tab_id);
++  snapshot_indexes_.erase(tab_id);
++  scoped_ax_modes_.erase(tab_id);
++}
++
++void SteadAgentControlService::PrivateBrowserControl::ForgetObservedTab(
++    int32_t tab_id) {
++  observed_tabs_.erase(tab_id);
++}
++
++mojom::AxNodePtr SteadAgentControlService::PrivateBrowserControl::BuildAxNode(
 +    const ui::AXTree& tree,
 +    ui::AXNode* node,
 +    int32_t tab_id,
@@ -906,7 +977,7 @@ index 0000000000000..7a3e021c74dab
 +      browser_control_->DispatchAccessibilityAction(*ref, action_id, action,
 +                                                    value);
 +  if (result->ok) {
-+    content::WebContents* web_contents = FindTabById(tab_id);
++    content::WebContents* web_contents = browser_control_->FindTabById(tab_id);
 +    pending_action_by_tab_[tab_id] = action_id;
 +    EmitEvent(mojom::ControlEventType::kActionDispatched, tab_id,
 +              ref->frame->frame_token, action_id, WebContentsUrl(web_contents),
@@ -931,7 +1002,7 @@ index 0000000000000..7a3e021c74dab
 +  }
 +
 +  const int32_t originating_action_id = TakePendingActionForTab(tab_id);
-+  content::WebContents* web_contents = FindTabById(tab_id);
++  content::WebContents* web_contents = browser_control_->FindTabById(tab_id);
 +  EmitEvent(mojom::ControlEventType::kNavigated, tab_id, frame_token,
 +            originating_action_id, navigation_handle->GetURL().spec(),
 +            WebContentsTitle(web_contents),
@@ -943,9 +1014,7 @@ index 0000000000000..7a3e021c74dab
 +void SteadAgentControlService::OnTabClosed(int32_t tab_id) {
 +  pending_action_by_tab_.erase(tab_id);
 +  ClearApprovalGrantsForTab(tab_id);
-+  snapshot_generations_.erase(tab_id);
-+  snapshot_indexes_.erase(tab_id);
-+  scoped_ax_modes_.erase(tab_id);
++  browser_control_->ClearTabState(tab_id);
 +  EmitEvent(mojom::ControlEventType::kTabClosed, tab_id, std::string(),
 +            kNoOriginatingAction, std::string(), std::string(), "tab_closed",
 +            std::string());
@@ -958,7 +1027,7 @@ index 0000000000000..7a3e021c74dab
 +}
 +
 +void SteadAgentControlService::ForgetObservedTab(int32_t tab_id) {
-+  observed_tabs_.erase(tab_id);
++  browser_control_->ForgetObservedTab(tab_id);
 +}
 +
 +int32_t SteadAgentControlService::TakePendingActionForTab(int32_t tab_id) {
@@ -994,7 +1063,7 @@ index 0000000000000..7a3e021c74dab
 +  }
 +}
 +
-+bool SteadAgentControlService::IsStaleFrame(
++bool SteadAgentControlService::PrivateBrowserControl::IsStaleFrame(
 +    const mojom::FrameRef& frame_ref,
 +    content::WebContents* web_contents) const {
 +  if (frame_ref.snapshot_generation !=
@@ -1005,7 +1074,7 @@ index 0000000000000..7a3e021c74dab
 +  return frame_ref.frame_token != CurrentMainFrameToken(web_contents);
 +}
 +
-+bool SteadAgentControlService::SnapshotIndexContains(
++bool SteadAgentControlService::PrivateBrowserControl::SnapshotIndexContains(
 +    const mojom::NodeRef& ref) const {
 +  if (!ref.frame) {
 +    return false;
@@ -1021,7 +1090,7 @@ index 0000000000000..7a3e021c74dab
 +         index->second->node_ids.contains(ref.ax_node_id);
 +}
 +
-+bool SteadAgentControlService::CurrentTreeContainsNode(
++bool SteadAgentControlService::PrivateBrowserControl::CurrentTreeContainsNode(
 +    content::WebContents* web_contents,
 +    const mojom::NodeRef& ref) const {
 +  if (!web_contents || !ref.frame) {
@@ -1140,7 +1209,7 @@ index 0000000000000..7a3e021c74dab
 +  }
 +}
 +
-+uint32_t SteadAgentControlService::CurrentSnapshotGeneration(
++uint32_t SteadAgentControlService::PrivateBrowserControl::CurrentSnapshotGeneration(
 +    int32_t tab_id) const {
 +  const auto generation = snapshot_generations_.find(tab_id);
 +  if (generation == snapshot_generations_.end()) {
@@ -1149,7 +1218,8 @@ index 0000000000000..7a3e021c74dab
 +  return generation->second;
 +}
 +
-+uint32_t SteadAgentControlService::BumpSnapshotGeneration(int32_t tab_id) {
++uint32_t SteadAgentControlService::PrivateBrowserControl::BumpSnapshotGeneration(
++    int32_t tab_id) {
 +  uint32_t& generation = snapshot_generations_[tab_id];
 +  ++generation;
 +  return generation;
@@ -1181,7 +1251,7 @@ new file mode 100644
 index 0000000000000..c1c7d850f8a48
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,161 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1190,6 +1260,7 @@ index 0000000000000..c1c7d850f8a48
 +#define CHROME_BROWSER_UI_STEAD_AGENT_CONTROL_STEAD_AGENT_CONTROL_SERVICE_H_
 +
 +#include <cstdint>
++#include <deque>
 +#include <memory>
 +#include <string>
 +
@@ -1263,23 +1334,6 @@ index 0000000000000..c1c7d850f8a48
 +  struct SnapshotBuildState;
 +  struct SnapshotIndex;
 +
-+  content::WebContents* FindTabById(int32_t tab_id);
-+  void EnsureTabObserved(content::WebContents* web_contents, int32_t tab_id);
-+  void EnsureAccessibilityMode(content::WebContents* web_contents,
-+                               int32_t tab_id);
-+
-+  mojom::AxNodePtr BuildAxNode(const ui::AXTree& tree,
-+                               ui::AXNode* node,
-+                               int32_t tab_id,
-+                               const std::string& frame_token,
-+                               uint32_t generation,
-+                               SnapshotBuildState* state) const;
-+  void CompleteSnapshotFromUpdate(int32_t tab_id,
-+                                  int32_t action_id,
-+                                  mojom::SnapshotOptionsPtr options,
-+                                  base::TimeTicks start_time,
-+                                  GetSnapshotCallback callback,
-+                                  ui::AXTreeUpdate& update);
 +  void FinishSnapshot(int32_t tab_id,
 +                      GetSnapshotCallback callback,
 +                      mojom::ActionResultPtr result,
@@ -1290,11 +1344,6 @@ index 0000000000000..c1c7d850f8a48
 +      ax::mojom::Action action,
 +      const std::string& value = std::string());
 +
-+  bool IsStaleFrame(const mojom::FrameRef& frame_ref,
-+                    content::WebContents* web_contents) const;
-+  bool SnapshotIndexContains(const mojom::NodeRef& ref) const;
-+  bool CurrentTreeContainsNode(content::WebContents* web_contents,
-+                               const mojom::NodeRef& ref) const;
 +  mojom::ActionResultPtr MaybeGateAction(int32_t action_id,
 +                                         int32_t tab_id,
 +                                         mojom::ActionClass action_class,
@@ -1323,8 +1372,6 @@ index 0000000000000..c1c7d850f8a48
 +                 const std::string& title,
 +                 const std::string& code,
 +                 const std::string& message);
-+  uint32_t CurrentSnapshotGeneration(int32_t tab_id) const;
-+  uint32_t BumpSnapshotGeneration(int32_t tab_id);
 +  int32_t NextActionId();
 +
 +  mojom::ActionResultPtr MakeResult(
@@ -1346,11 +1393,6 @@ index 0000000000000..c1c7d850f8a48
 +  mojo::RemoteSet<mojom::ControlObserver> observers_;
 +  mojo::RemoteSet<mojom::ConsoleObserver> console_observers_;
 +
-+  base::flat_map<int32_t, std::unique_ptr<content::ScopedAccessibilityMode>>
-+      scoped_ax_modes_;
-+  base::flat_map<int32_t, uint32_t> snapshot_generations_;
-+  base::flat_map<int32_t, std::unique_ptr<ObservedTab>> observed_tabs_;
-+  base::flat_map<int32_t, std::unique_ptr<SnapshotIndex>> snapshot_indexes_;
 +  base::flat_map<int32_t, int32_t> pending_action_by_tab_;
 +  struct ApprovalGrant {
 +    int32_t tab_id;
