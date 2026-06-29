@@ -54,7 +54,7 @@ new file mode 100644
 index 0000000000000..4cbb02c943bdb
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/agent_control.mojom
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,193 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -183,6 +183,43 @@ index 0000000000000..4cbb02c943bdb
 +  OnEvent(ControlEvent event);
 +};
 +
++enum ActionClass {
++  kReadOnly,
++  kNavigation,
++  kFormEntry,
++  kDestructive,
++  kPayment,
++  kCredential,
++  kFileAccess,
++  kRawInput,
++  kEval,
++};
++
++struct AuditEntry {
++  int32 action_id;
++  uint64 sequence;
++  int32 tab_id;
++  ActionClass action_class;
++  string operation;
++  string code;
++  string message;
++  bool ok;
++};
++
++struct ConfirmationRequest {
++  int32 action_id;
++  int32 tab_id;
++  ActionClass action_class;
++  string operation;
++  string reason;
++};
++
++interface ConsoleObserver {
++  OnAuditEntry(AuditEntry entry);
++  OnConfirmation(ConfirmationRequest request);
++  OnCancelled(int32 tab_id);
++};
++
 +// AgentControl is the broker-facing surface. Raw BrowserControl primitives stay
 +// private to the broker; WebUI console surfaces must not bind this interface
 +// directly unless they are acting as the broker.
@@ -202,19 +239,30 @@ index 0000000000000..4cbb02c943bdb
 +  Fill(NodeRef ref, string value) => (ActionResult result);
 +  ScrollIntoView(NodeRef ref) => (ActionResult result);
 +};
++
++// WebUI-facing console surface. It can observe, approve, audit, and cancel, but
++// it has no page-driving methods.
++interface ControlConsole {
++  AddObserver(pending_remote<ConsoleObserver> observer);
++  GetAuditLog(uint32 max_entries) => (array<AuditEntry> entries);
++  RespondToConfirmation(int32 action_id, bool approve);
++  Cancel(int32 tab_id);
++};
 diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 new file mode 100644
 index 0000000000000..7a3e021c74dab
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
-@@ -0,0 +1,691 @@
+@@ -0,0 +1,922 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
 +
++#include <algorithm>
 +#include <cstdint>
++#include <deque>
 +#include <memory>
 +#include <string>
 +#include <utility>
@@ -264,6 +312,7 @@ index 0000000000000..7a3e021c74dab
 +constexpr char kAccessibilityActionAccepted[] = "accessibility_action_accepted";
 +constexpr int32_t kNoOriginatingAction = 0;
 +constexpr uint32_t kDefaultMaxSnapshotNodes = 2000;
++constexpr size_t kMaxAuditEntries = 1000;
 +constexpr base::TimeDelta kColdSnapshotTimeout = base::Milliseconds(800);
 +
 +bool SameProfile(Profile* lhs, Profile* rhs) {
@@ -322,6 +371,90 @@ index 0000000000000..7a3e021c74dab
 +  base::flat_set<int32_t> node_ids;
 +};
 +
++class SteadAgentControlService::PrivateBrowserControl {
++ public:
++  explicit PrivateBrowserControl(SteadAgentControlService* broker)
++      : broker_(broker) {}
++
++  PrivateBrowserControl(const PrivateBrowserControl&) = delete;
++  PrivateBrowserControl& operator=(const PrivateBrowserControl&) = delete;
++  ~PrivateBrowserControl() = default;
++
++  mojom::ActionResultPtr DispatchAccessibilityAction(
++      const mojom::NodeRef& ref,
++      int32_t action_id,
++      ax::mojom::Action action,
++      const std::string& value) {
++    content::WebContents* web_contents = broker_->FindTabById(ref.frame->tab_id);
++    if (!web_contents) {
++      return broker_->MakeResult(action_id, false, kTabMissing,
++                                 "Tab was not found.",
++                                 /*stale=*/false, /*needs_snapshot=*/false,
++                                 /*needs_confirmation=*/false,
++                                 /*target_missing=*/true);
++    }
++
++    if (broker_->IsStaleFrame(*ref.frame, web_contents)) {
++      return broker_->MakeResult(
++          action_id, false, kStaleRef, "Target ref is from an old snapshot.",
++          /*stale=*/true, /*needs_snapshot=*/true,
++          /*needs_confirmation=*/false, /*target_missing=*/false,
++          /*blocked_by=*/std::string(),
++          broker_->CurrentSnapshotGeneration(ref.frame->tab_id));
++    }
++
++    if (!broker_->SnapshotIndexContains(ref)) {
++      return broker_->MakeResult(
++          action_id, false, kTargetMissing,
++          "Target node is not present in the latest snapshot.",
++          /*stale=*/false, /*needs_snapshot=*/true,
++          /*needs_confirmation=*/false, /*target_missing=*/true,
++          /*blocked_by=*/std::string(),
++          broker_->CurrentSnapshotGeneration(ref.frame->tab_id));
++    }
++
++    if (!broker_->CurrentTreeContainsNode(web_contents, ref)) {
++      return broker_->MakeResult(
++          action_id, false, kTargetMissing,
++          "Target node is not present in the current AX tree.",
++          /*stale=*/false, /*needs_snapshot=*/true,
++          /*needs_confirmation=*/false, /*target_missing=*/true,
++          /*blocked_by=*/std::string(),
++          broker_->CurrentSnapshotGeneration(ref.frame->tab_id));
++    }
++
++    content::RenderFrameHost* frame = web_contents->GetPrimaryMainFrame();
++    if (!frame) {
++      return broker_->MakeResult(action_id, false, kTargetMissing,
++                                 "Primary frame was not available.",
++                                 /*stale=*/false, /*needs_snapshot=*/true,
++                                 /*needs_confirmation=*/false,
++                                 /*target_missing=*/true,
++                                 /*blocked_by=*/std::string(),
++                                 broker_->CurrentSnapshotGeneration(
++                                     ref.frame->tab_id));
++    }
++
++    ui::AXActionData action_data;
++    action_data.action = action;
++    action_data.target_tree_id = frame->GetAXTreeID();
++    action_data.target_node_id = ref.ax_node_id;
++    action_data.value = value;
++    frame->AccessibilityPerformAction(action_data);
++
++    return broker_->MakeResult(
++        action_id, true, kAccessibilityActionAccepted,
++        "Accessibility action accepted for dispatch.",
++        /*stale=*/false, /*needs_snapshot=*/true,
++        /*needs_confirmation=*/false, /*target_missing=*/false,
++        /*blocked_by=*/std::string(),
++        broker_->CurrentSnapshotGeneration(ref.frame->tab_id));
++  }
++
++ private:
++  raw_ptr<SteadAgentControlService> broker_;
++};
++
 +class SteadAgentControlService::ObservedTab
 +    : public content::WebContentsObserver {
 + public:
@@ -362,7 +495,8 @@ index 0000000000000..7a3e021c74dab
 +};
 +
 +SteadAgentControlService::SteadAgentControlService(Profile* profile)
-+    : profile_(profile) {}
++    : profile_(profile),
++      browser_control_(std::make_unique<PrivateBrowserControl>(this)) {}
 +
 +SteadAgentControlService::~SteadAgentControlService() = default;
 +
@@ -371,9 +505,68 @@ index 0000000000000..7a3e021c74dab
 +  receivers_.Add(this, std::move(receiver));
 +}
 +
++void SteadAgentControlService::BindConsole(
++    mojo::PendingReceiver<mojom::ControlConsole> receiver) {
++  console_receivers_.Add(this, std::move(receiver));
++}
++
 +void SteadAgentControlService::Observe(
 +    mojo::PendingRemote<mojom::ControlObserver> observer) {
 +  observers_.Add(std::move(observer));
++}
++
++void SteadAgentControlService::AddObserver(
++    mojo::PendingRemote<mojom::ConsoleObserver> observer) {
++  console_observers_.Add(std::move(observer));
++}
++
++void SteadAgentControlService::GetAuditLog(uint32_t max_entries,
++                                           GetAuditLogCallback callback) {
++  const size_t requested =
++      max_entries == 0 ? audit_log_.size() : static_cast<size_t>(max_entries);
++  const size_t count = std::min(requested, audit_log_.size());
++  std::vector<mojom::AuditEntryPtr> entries;
++  entries.reserve(count);
++
++  const size_t start = audit_log_.size() - count;
++  for (size_t i = start; i < audit_log_.size(); ++i) {
++    entries.push_back(CloneAuditEntry(*audit_log_[i]));
++  }
++
++  std::move(callback).Run(std::move(entries));
++}
++
++void SteadAgentControlService::RespondToConfirmation(int32_t action_id,
++                                                     bool approve) {
++  const auto request = pending_confirmations_.find(action_id);
++  if (request == pending_confirmations_.end()) {
++    return;
++  }
++
++  // The MVP records the decision and unblocks future retries. The original
++  // action is not replayed because refs may be stale by the time approval lands.
++  auto result = MakeResult(action_id, approve, approve ? "approved" : "denied",
++                           approve ? "Confirmation approved."
++                                   : "Confirmation denied.",
++                           /*stale=*/false, /*needs_snapshot=*/approve,
++                           /*needs_confirmation=*/false,
++                           /*target_missing=*/false);
++  if (approve) {
++    approval_grants_.push_back({request->second->tab_id,
++                                request->second->action_class,
++                                request->second->operation});
++  }
++  RecordAudit(*result, request->second->tab_id, request->second->action_class,
++              request->second->operation);
++  pending_confirmations_.erase(request);
++}
++
++void SteadAgentControlService::Cancel(int32_t tab_id) {
++  pending_action_by_tab_.erase(tab_id);
++  ClearApprovalGrantsForTab(tab_id);
++  for (auto& observer : console_observers_) {
++    observer->OnCancelled(tab_id);
++  }
 +}
 +
 +void SteadAgentControlService::ListTabs(ListTabsCallback callback) {
@@ -425,11 +618,13 @@ index 0000000000000..7a3e021c74dab
 +  const base::TimeTicks start_time = base::TimeTicks::Now();
 +  content::WebContents* web_contents = FindTabById(tab_id);
 +  if (!web_contents) {
-+    std::move(callback).Run(
-+        MakeResult(action_id, false, kTabMissing, "Tab was not found.",
-+                   /*stale=*/false, /*needs_snapshot=*/false,
-+                   /*needs_confirmation=*/false, /*target_missing=*/true),
-+        nullptr);
++    FinishSnapshot(tab_id, std::move(callback),
++                   MakeResult(action_id, false, kTabMissing,
++                              "Tab was not found.",
++                              /*stale=*/false, /*needs_snapshot=*/false,
++                              /*needs_confirmation=*/false,
++                              /*target_missing=*/true),
++                   nullptr);
 +    return;
 +  }
 +
@@ -464,22 +659,25 @@ index 0000000000000..7a3e021c74dab
 +    ui::AXTreeUpdate& update) {
 +  content::WebContents* web_contents = FindTabById(tab_id);
 +  if (!web_contents) {
-+    std::move(callback).Run(
-+        MakeResult(action_id, false, kTabMissing, "Tab was not found.",
-+                   /*stale=*/false, /*needs_snapshot=*/false,
-+                   /*needs_confirmation=*/false, /*target_missing=*/true),
-+        nullptr);
++    FinishSnapshot(tab_id, std::move(callback),
++                   MakeResult(action_id, false, kTabMissing,
++                              "Tab was not found.",
++                              /*stale=*/false, /*needs_snapshot=*/false,
++                              /*needs_confirmation=*/false,
++                              /*target_missing=*/true),
++                   nullptr);
 +    return;
 +  }
 +
 +  ui::AXTree tree;
 +  if (!tree.Unserialize(update) || !tree.root()) {
-+    std::move(callback).Run(
-+        MakeResult(action_id, false, kSnapshotUnavailable,
-+                   "Accessibility snapshot was unavailable.",
-+                   /*stale=*/false, /*needs_snapshot=*/true,
-+                   /*needs_confirmation=*/false, /*target_missing=*/false),
-+        nullptr);
++    FinishSnapshot(tab_id, std::move(callback),
++                   MakeResult(action_id, false, kSnapshotUnavailable,
++                              "Accessibility snapshot was unavailable.",
++                              /*stale=*/false, /*needs_snapshot=*/true,
++                              /*needs_confirmation=*/false,
++                              /*target_missing=*/false),
++                   nullptr);
 +    return;
 +  }
 +
@@ -496,12 +694,13 @@ index 0000000000000..7a3e021c74dab
 +      BuildAxNode(tree, tree.root(), tab_id, frame_token, generation,
 +                  &build_state);
 +  if (!root) {
-+    std::move(callback).Run(
-+        MakeResult(action_id, false, kSnapshotUnavailable,
-+                   "Accessibility snapshot root was filtered out.",
-+                   /*stale=*/false, /*needs_snapshot=*/true,
-+                   /*needs_confirmation=*/false, /*target_missing=*/false),
-+        nullptr);
++    FinishSnapshot(tab_id, std::move(callback),
++                   MakeResult(action_id, false, kSnapshotUnavailable,
++                              "Accessibility snapshot root was filtered out.",
++                              /*stale=*/false, /*needs_snapshot=*/true,
++                              /*needs_confirmation=*/false,
++                              /*target_missing=*/false),
++                   nullptr);
 +    return;
 +  }
 +
@@ -522,12 +721,22 @@ index 0000000000000..7a3e021c74dab
 +  snapshot_index->node_ids = std::move(build_state.node_ids);
 +  snapshot_indexes_[tab_id] = std::move(snapshot_index);
 +
-+  std::move(callback).Run(
-+      MakeResult(action_id, true, kOk, "Snapshot captured.",
-+                 /*stale=*/false, /*needs_snapshot=*/false,
-+                 /*needs_confirmation=*/false, /*target_missing=*/false,
-+                 /*blocked_by=*/std::string(), generation),
-+      std::move(snapshot));
++  FinishSnapshot(tab_id, std::move(callback),
++                 MakeResult(action_id, true, kOk, "Snapshot captured.",
++                            /*stale=*/false, /*needs_snapshot=*/false,
++                            /*needs_confirmation=*/false,
++                            /*target_missing=*/false,
++                            /*blocked_by=*/std::string(), generation),
++                 std::move(snapshot));
++}
++
++void SteadAgentControlService::FinishSnapshot(
++    int32_t tab_id,
++    GetSnapshotCallback callback,
++    mojom::ActionResultPtr result,
++    mojom::SnapshotPtr snapshot) {
++  RecordAudit(*result, tab_id, mojom::ActionClass::kReadOnly, "GetSnapshot");
++  std::move(callback).Run(std::move(result), std::move(snapshot));
 +}
 +
 +void SteadAgentControlService::Focus(mojom::NodeRefPtr ref,
@@ -671,76 +880,41 @@ index 0000000000000..7a3e021c74dab
 +    ax::mojom::Action action,
 +    const std::string& value) {
 +  const int32_t action_id = NextActionId();
++  const int32_t tab_id = ref && ref->frame ? ref->frame->tab_id : 0;
++  const mojom::ActionClass action_class = mojom::ActionClass::kFormEntry;
++  const std::string operation = ui::ToString(action);
++  auto finish = [&](mojom::ActionResultPtr result) {
++    RecordAudit(*result, tab_id, action_class, operation);
++    return result;
++  };
++
 +  if (!ref || !ref->frame) {
-+    return MakeResult(action_id, false, kTargetMissing,
-+                      "Target ref was empty.",
-+                      /*stale=*/false, /*needs_snapshot=*/false,
-+                      /*needs_confirmation=*/false, /*target_missing=*/true);
++    return finish(MakeResult(action_id, false, kTargetMissing,
++                             "Target ref was empty.",
++                             /*stale=*/false, /*needs_snapshot=*/false,
++                             /*needs_confirmation=*/false,
++                             /*target_missing=*/true));
 +  }
 +
-+  content::WebContents* web_contents = FindTabById(ref->frame->tab_id);
-+  if (!web_contents) {
-+    return MakeResult(action_id, false, kTabMissing, "Tab was not found.",
-+                      /*stale=*/false, /*needs_snapshot=*/false,
-+                      /*needs_confirmation=*/false, /*target_missing=*/true);
++  mojom::ActionResultPtr gate =
++      MaybeGateAction(action_id, tab_id, action_class, operation);
++  if (gate) {
++    return finish(std::move(gate));
 +  }
 +
-+  if (IsStaleFrame(*ref->frame, web_contents)) {
-+    return MakeResult(action_id, false, kStaleRef,
-+                      "Target ref is from an old snapshot.",
-+                      /*stale=*/true, /*needs_snapshot=*/true,
-+                      /*needs_confirmation=*/false, /*target_missing=*/false,
-+                      /*blocked_by=*/std::string(),
-+                      CurrentSnapshotGeneration(ref->frame->tab_id));
++  mojom::ActionResultPtr result =
++      browser_control_->DispatchAccessibilityAction(*ref, action_id, action,
++                                                    value);
++  if (result->ok) {
++    content::WebContents* web_contents = FindTabById(tab_id);
++    pending_action_by_tab_[tab_id] = action_id;
++    EmitEvent(mojom::ControlEventType::kActionDispatched, tab_id,
++              ref->frame->frame_token, action_id, WebContentsUrl(web_contents),
++              WebContentsTitle(web_contents), kAccessibilityActionAccepted,
++              operation);
 +  }
 +
-+  if (!SnapshotIndexContains(*ref)) {
-+    return MakeResult(action_id, false, kTargetMissing,
-+                      "Target node is not present in the latest snapshot.",
-+                      /*stale=*/false, /*needs_snapshot=*/true,
-+                      /*needs_confirmation=*/false, /*target_missing=*/true,
-+                      /*blocked_by=*/std::string(),
-+                      CurrentSnapshotGeneration(ref->frame->tab_id));
-+  }
-+
-+  if (!CurrentTreeContainsNode(web_contents, *ref)) {
-+    return MakeResult(action_id, false, kTargetMissing,
-+                      "Target node is not present in the current AX tree.",
-+                      /*stale=*/false, /*needs_snapshot=*/true,
-+                      /*needs_confirmation=*/false, /*target_missing=*/true,
-+                      /*blocked_by=*/std::string(),
-+                      CurrentSnapshotGeneration(ref->frame->tab_id));
-+  }
-+
-+  content::RenderFrameHost* frame = web_contents->GetPrimaryMainFrame();
-+  if (!frame) {
-+    return MakeResult(action_id, false, kTargetMissing,
-+                      "Primary frame was not available.",
-+                      /*stale=*/false, /*needs_snapshot=*/true,
-+                      /*needs_confirmation=*/false, /*target_missing=*/true,
-+                      /*blocked_by=*/std::string(),
-+                      CurrentSnapshotGeneration(ref->frame->tab_id));
-+  }
-+
-+  ui::AXActionData action_data;
-+  action_data.action = action;
-+  action_data.target_tree_id = frame->GetAXTreeID();
-+  action_data.target_node_id = ref->ax_node_id;
-+  action_data.value = value;
-+  frame->AccessibilityPerformAction(action_data);
-+
-+  pending_action_by_tab_[ref->frame->tab_id] = action_id;
-+  EmitEvent(mojom::ControlEventType::kActionDispatched, ref->frame->tab_id,
-+            ref->frame->frame_token, action_id, WebContentsUrl(web_contents),
-+            WebContentsTitle(web_contents), kAccessibilityActionAccepted,
-+            ui::ToString(action));
-+
-+  return MakeResult(action_id, true, kAccessibilityActionAccepted,
-+                    "Accessibility action accepted for dispatch.",
-+                    /*stale=*/false, /*needs_snapshot=*/true,
-+                    /*needs_confirmation=*/false, /*target_missing=*/false,
-+                    /*blocked_by=*/std::string(),
-+                    CurrentSnapshotGeneration(ref->frame->tab_id));
++  return finish(std::move(result));
 +}
 +
 +void SteadAgentControlService::OnNavigationCommitted(
@@ -768,6 +942,7 @@ index 0000000000000..7a3e021c74dab
 +
 +void SteadAgentControlService::OnTabClosed(int32_t tab_id) {
 +  pending_action_by_tab_.erase(tab_id);
++  ClearApprovalGrantsForTab(tab_id);
 +  snapshot_generations_.erase(tab_id);
 +  snapshot_indexes_.erase(tab_id);
 +  scoped_ax_modes_.erase(tab_id);
@@ -863,6 +1038,108 @@ index 0000000000000..7a3e021c74dab
 +  return tree.GetFromId(ref.ax_node_id) != nullptr;
 +}
 +
++mojom::ActionResultPtr SteadAgentControlService::MaybeGateAction(
++    int32_t action_id,
++    int32_t tab_id,
++    mojom::ActionClass action_class,
++    const std::string& operation) {
++  const bool requires_confirmation =
++      action_class == mojom::ActionClass::kDestructive ||
++      action_class == mojom::ActionClass::kPayment ||
++      action_class == mojom::ActionClass::kCredential ||
++      action_class == mojom::ActionClass::kFileAccess ||
++      action_class == mojom::ActionClass::kRawInput ||
++      action_class == mojom::ActionClass::kEval;
++
++  if (!requires_confirmation) {
++    return nullptr;
++  }
++
++  if (ConsumeApprovalGrant(tab_id, action_class, operation)) {
++    return nullptr;
++  }
++
++  auto stored_request = mojom::ConfirmationRequest::New(
++      action_id, tab_id, action_class, operation,
++      "High-risk action requires confirmation.");
++  auto outbound_request = mojom::ConfirmationRequest::New(
++      action_id, tab_id, action_class, operation,
++      "High-risk action requires confirmation.");
++  pending_confirmations_[action_id] = std::move(stored_request);
++  NotifyConfirmation(std::move(outbound_request));
++
++  return MakeResult(action_id, false, "needs_confirmation",
++                    "Action requires confirmation.",
++                    /*stale=*/false, /*needs_snapshot=*/false,
++                    /*needs_confirmation=*/true, /*target_missing=*/false,
++                    "confirmation");
++}
++
++void SteadAgentControlService::RecordAudit(
++    const mojom::ActionResult& result,
++    int32_t tab_id,
++    mojom::ActionClass action_class,
++    const std::string& operation) {
++  auto entry = mojom::AuditEntry::New(
++      result.action_id, next_audit_sequence_++, tab_id, action_class, operation,
++      result.code, result.message, result.ok);
++
++  for (auto& observer : console_observers_) {
++    observer->OnAuditEntry(CloneAuditEntry(*entry));
++  }
++
++  audit_log_.push_back(std::move(entry));
++  while (audit_log_.size() > kMaxAuditEntries) {
++    audit_log_.pop_front();
++  }
++}
++
++void SteadAgentControlService::NotifyConfirmation(
++    mojom::ConfirmationRequestPtr request) {
++  if (!request) {
++    return;
++  }
++
++  for (auto& observer : console_observers_) {
++    observer->OnConfirmation(mojom::ConfirmationRequest::New(
++        request->action_id, request->tab_id, request->action_class,
++        request->operation, request->reason));
++  }
++}
++
++mojom::AuditEntryPtr SteadAgentControlService::CloneAuditEntry(
++    const mojom::AuditEntry& entry) const {
++  return mojom::AuditEntry::New(entry.action_id, entry.sequence, entry.tab_id,
++                                entry.action_class, entry.operation,
++                                entry.code, entry.message, entry.ok);
++}
++
++bool SteadAgentControlService::ConsumeApprovalGrant(
++    int32_t tab_id,
++    mojom::ActionClass action_class,
++    const std::string& operation) {
++  for (auto grant = approval_grants_.begin(); grant != approval_grants_.end();
++       ++grant) {
++    if (grant->tab_id == tab_id && grant->action_class == action_class &&
++        grant->operation == operation) {
++      approval_grants_.erase(grant);
++      return true;
++    }
++  }
++
++  return false;
++}
++
++void SteadAgentControlService::ClearApprovalGrantsForTab(int32_t tab_id) {
++  for (auto grant = approval_grants_.begin(); grant != approval_grants_.end();) {
++    if (grant->tab_id == tab_id) {
++      grant = approval_grants_.erase(grant);
++    } else {
++      ++grant;
++    }
++  }
++}
++
 +uint32_t SteadAgentControlService::CurrentSnapshotGeneration(
 +    int32_t tab_id) const {
 +  const auto generation = snapshot_generations_.find(tab_id);
@@ -904,7 +1181,7 @@ new file mode 100644
 index 0000000000000..c1c7d850f8a48
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,189 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -943,12 +1220,13 @@ index 0000000000000..c1c7d850f8a48
 +
 +namespace stead {
 +
-+// Browser-resident AgentControl implementation for Stead's broker layer.
++// Browser-resident broker implementation for Stead's control layer.
 +//
 +// This service intentionally exposes only semantic, ref-aware browser actions.
 +// Synthetic input, renderer Eval, screenshot reads, and credential APIs should
 +// be added here only after the broker policy/audit/taint path exists for them.
-+class SteadAgentControlService : public mojom::AgentControl {
++class SteadAgentControlService : public mojom::AgentControl,
++                                public mojom::ControlConsole {
 + public:
 +  explicit SteadAgentControlService(Profile* profile);
 +  SteadAgentControlService(const SteadAgentControlService&) = delete;
@@ -956,6 +1234,7 @@ index 0000000000000..c1c7d850f8a48
 +  ~SteadAgentControlService() override;
 +
 +  void Bind(mojo::PendingReceiver<mojom::AgentControl> receiver);
++  void BindConsole(mojo::PendingReceiver<mojom::ControlConsole> receiver);
 +
 +  // mojom::AgentControl:
 +  void Observe(mojo::PendingRemote<mojom::ControlObserver> observer) override;
@@ -971,7 +1250,15 @@ index 0000000000000..c1c7d850f8a48
 +  void ScrollIntoView(mojom::NodeRefPtr ref,
 +                      ScrollIntoViewCallback callback) override;
 +
++  // mojom::ControlConsole:
++  void AddObserver(mojo::PendingRemote<mojom::ConsoleObserver> observer)
++      override;
++  void GetAuditLog(uint32_t max_entries, GetAuditLogCallback callback) override;
++  void RespondToConfirmation(int32_t action_id, bool approve) override;
++  void Cancel(int32_t tab_id) override;
++
 + private:
++  class PrivateBrowserControl;
 +  class ObservedTab;
 +  struct SnapshotBuildState;
 +  struct SnapshotIndex;
@@ -993,6 +1280,10 @@ index 0000000000000..c1c7d850f8a48
 +                                  base::TimeTicks start_time,
 +                                  GetSnapshotCallback callback,
 +                                  ui::AXTreeUpdate& update);
++  void FinishSnapshot(int32_t tab_id,
++                      GetSnapshotCallback callback,
++                      mojom::ActionResultPtr result,
++                      mojom::SnapshotPtr snapshot);
 +
 +  mojom::ActionResultPtr PerformAccessibilityAction(
 +      mojom::NodeRefPtr ref,
@@ -1004,6 +1295,20 @@ index 0000000000000..c1c7d850f8a48
 +  bool SnapshotIndexContains(const mojom::NodeRef& ref) const;
 +  bool CurrentTreeContainsNode(content::WebContents* web_contents,
 +                               const mojom::NodeRef& ref) const;
++  mojom::ActionResultPtr MaybeGateAction(int32_t action_id,
++                                         int32_t tab_id,
++                                         mojom::ActionClass action_class,
++                                         const std::string& operation);
++  void RecordAudit(const mojom::ActionResult& result,
++                   int32_t tab_id,
++                   mojom::ActionClass action_class,
++                   const std::string& operation);
++  void NotifyConfirmation(mojom::ConfirmationRequestPtr request);
++  mojom::AuditEntryPtr CloneAuditEntry(const mojom::AuditEntry& entry) const;
++  bool ConsumeApprovalGrant(int32_t tab_id,
++                            mojom::ActionClass action_class,
++                            const std::string& operation);
++  void ClearApprovalGrantsForTab(int32_t tab_id);
 +  void OnNavigationCommitted(int32_t tab_id,
 +                             content::NavigationHandle* navigation_handle);
 +  void OnTabClosed(int32_t tab_id);
@@ -1035,8 +1340,11 @@ index 0000000000000..c1c7d850f8a48
 +      uint32_t new_generation = 0) const;
 +
 +  raw_ptr<Profile> profile_;
++  std::unique_ptr<PrivateBrowserControl> browser_control_;
 +  mojo::ReceiverSet<mojom::AgentControl> receivers_;
++  mojo::ReceiverSet<mojom::ControlConsole> console_receivers_;
 +  mojo::RemoteSet<mojom::ControlObserver> observers_;
++  mojo::RemoteSet<mojom::ConsoleObserver> console_observers_;
 +
 +  base::flat_map<int32_t, std::unique_ptr<content::ScopedAccessibilityMode>>
 +      scoped_ax_modes_;
@@ -1044,9 +1352,19 @@ index 0000000000000..c1c7d850f8a48
 +  base::flat_map<int32_t, std::unique_ptr<ObservedTab>> observed_tabs_;
 +  base::flat_map<int32_t, std::unique_ptr<SnapshotIndex>> snapshot_indexes_;
 +  base::flat_map<int32_t, int32_t> pending_action_by_tab_;
++  struct ApprovalGrant {
++    int32_t tab_id;
++    mojom::ActionClass action_class;
++    std::string operation;
++  };
++  std::deque<mojom::AuditEntryPtr> audit_log_;
++  std::deque<ApprovalGrant> approval_grants_;
++  base::flat_map<int32_t, mojom::ConfirmationRequestPtr>
++      pending_confirmations_;
 +  int32_t next_action_id_ = 1;
 +  int32_t next_event_id_ = 1;
 +  uint64_t next_event_sequence_ = 1;
++  uint64_t next_audit_sequence_ = 1;
 +  base::WeakPtrFactory<SteadAgentControlService> weak_factory_{this};
 +};
 +
