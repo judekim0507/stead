@@ -359,6 +359,46 @@ sessions at all.
 - **Process model:** **utility process** (sandboxed; default). In-process Rust
   only to chase the last MB (a misbehaving loop then risks the browser).
 
+### Session persistence (on-disk) — §14's "shared store," made concrete
+
+The brain owns a directory tree (the Pi/Aside model — Aside's daemon *is* Pi, so
+this is verified against its live on-disk layout):
+
+```
+<root>/u/<id>/agents/main/             # agent home
+  AGENTS.md   SOUL.md                  # instructions + persona
+  memory/                              # persistent agent memory
+  skills/                              # the skills library (§15)
+  sessions/<YYYY-MM-DD>_<rand>/        # ONE dir per chat
+    messages.jsonl                     # append-only transcript
+    artifacts/                         # files the agent created in THIS chat
+    meta.json                          # title, created/updated, origin surface, tab ctx
+```
+
+- **`messages.jsonl`** — append-only, one JSON object per line, flushed per turn
+  (crash-safe). Three roles:
+  - `user`       — `{role, content, timestamp}`
+  - `assistant`  — `{role, content, timestamp, model, provider, usage, stopReason, responseId}`
+  - `toolResult` — `{role, content, timestamp, toolName, toolCallId, isError, details}`
+
+  The assistant metadata (model / provider / `usage`) makes cost and resume
+  reconstructable. **Resume = replay** the file into context; **list = scan**
+  `sessions/` by `meta.json`.
+- **`artifacts/`** — the default landing spot for the agent's `write_file`;
+  scoped to the conversation, travels with it, browsable from the UI.
+
+Ties to the rest:
+- **§14 surfaces are views into `sessions/`** — `SessionSelector` and the new-tab
+  "Recent chats" list it. The WebUI reads session list/history **via the brain's
+  session surface**, not raw FS — same broker discipline: the UI asks, it isn't
+  handed filesystem access.
+- **Secret-free by construction** — the never-reveal boundary + snapshot redaction
+  (§12/§15) mean credentials never enter the agent's context, so they're never
+  written to `messages.jsonl` either. The transcript inherits redaction for free.
+- **Root:** Mac-native `~/Library/Application Support/Stead/` (or a `~/.stead/`
+  dotdir), with the Pi-style `agents/main/sessions/…` layout underneath so the
+  brain — Pi or a Rust port — works unchanged.
+
 ---
 
 ## 14. Usage model — surfaces, sessions & the two tab modes
