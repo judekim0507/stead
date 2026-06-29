@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000000000..f9f3cf0ea8747
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/BUILD.gn
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,36 @@
 +# Copyright 2026 The Stead Authors
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
@@ -30,6 +30,8 @@ index 0000000000000..f9f3cf0ea8747
 +
 +source_set("agent_control") {
 +  sources = [
++    "stead_agent_control_service_factory.cc",
++    "stead_agent_control_service_factory.h",
 +    "stead_agent_control_service.cc",
 +    "stead_agent_control_service.h",
 +  ]
@@ -40,6 +42,7 @@ index 0000000000000..f9f3cf0ea8747
 +    "//chrome/browser/profiles:profile",
 +    "//chrome/browser/ui/browser_window",
 +    "//chrome/browser/ui/tabs:tab_strip",
++    "//components/keyed_service/core",
 +    "//components/sessions",
 +    "//components/sessions:session_id",
 +    "//content/public/browser",
@@ -54,7 +57,7 @@ new file mode 100644
 index 0000000000000..4cbb02c943bdb
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/agent_control.mojom
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,195 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -231,6 +234,8 @@ index 0000000000000..4cbb02c943bdb
 +  GetSnapshot(int32 tab_id, SnapshotOptions? options)
 +      => (ActionResult result, Snapshot? snapshot);
 +
++  Navigate(int32 tab_id, string url) => (ActionResult result);
++
 +  // Semantic AX actions. These route through RenderFrameHost AX actions rather
 +  // than synthetic input so the first implementation remains observable and
 +  // ref/staleness-aware.
@@ -248,12 +253,152 @@ index 0000000000000..4cbb02c943bdb
 +  RespondToConfirmation(int32 action_id, bool approve);
 +  Cancel(int32 tab_id);
 +};
+diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.cc b/chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.cc
+new file mode 100644
+index 0000000000000..6f2f9ef28ed96
+--- /dev/null
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.cc
+@@ -0,0 +1,74 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
++
++#include <memory>
++#include <utility>
++
++#include "base/no_destructor.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_selections.h"
++#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
++#include "components/keyed_service/core/keyed_service.h"
++
++namespace stead {
++
++// static
++SteadAgentControlService* SteadAgentControlServiceFactory::GetForProfile(
++    Profile* profile) {
++  if (!profile) {
++    return nullptr;
++  }
++
++  return static_cast<SteadAgentControlService*>(
++      GetInstance()->GetServiceForBrowserContext(profile, /*create=*/true));
++}
++
++// static
++SteadAgentControlServiceFactory* SteadAgentControlServiceFactory::GetInstance() {
++  static base::NoDestructor<SteadAgentControlServiceFactory> instance;
++  return instance.get();
++}
++
++// static
++void SteadAgentControlServiceFactory::BindAgentControl(
++    Profile* profile,
++    mojo::PendingReceiver<mojom::AgentControl> receiver) {
++  SteadAgentControlService* service = GetForProfile(profile);
++  if (!service) {
++    return;
++  }
++  service->Bind(std::move(receiver));
++}
++
++// static
++void SteadAgentControlServiceFactory::BindControlConsole(
++    Profile* profile,
++    mojo::PendingReceiver<mojom::ControlConsole> receiver) {
++  SteadAgentControlService* service = GetForProfile(profile);
++  if (!service) {
++    return;
++  }
++  service->BindConsole(std::move(receiver));
++}
++
++SteadAgentControlServiceFactory::SteadAgentControlServiceFactory()
++    : ProfileKeyedServiceFactory(
++          "SteadAgentControlService",
++          ProfileSelections::BuildForRegularProfile()) {}
++
++SteadAgentControlServiceFactory::~SteadAgentControlServiceFactory() = default;
++
++std::unique_ptr<KeyedService>
++SteadAgentControlServiceFactory::BuildServiceInstanceForBrowserContext(
++    content::BrowserContext* context) const {
++  Profile* profile = Profile::FromBrowserContext(context);
++  if (!profile) {
++    return nullptr;
++  }
++  return std::make_unique<SteadAgentControlService>(profile);
++}
++
++}  // namespace stead
+diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h b/chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h
+new file mode 100644
+index 0000000000000..d27ea79e45295
+--- /dev/null
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h
+@@ -0,0 +1,54 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_STEAD_AGENT_CONTROL_STEAD_AGENT_CONTROL_SERVICE_FACTORY_H_
++#define CHROME_BROWSER_UI_STEAD_AGENT_CONTROL_STEAD_AGENT_CONTROL_SERVICE_FACTORY_H_
++
++#include <memory>
++
++#include "chrome/browser/profiles/profile_keyed_service_factory.h"
++#include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
++#include "mojo/public/cpp/bindings/pending_receiver.h"
++
++namespace base {
++template <typename T>
++class NoDestructor;
++}  // namespace base
++
++class KeyedService;
++class Profile;
++
++namespace stead {
++
++class SteadAgentControlService;
++
++// Profile-owned creation point for the control broker. Runtime callers bind
++// AgentControl or ControlConsole here; raw browser primitives remain private to
++// SteadAgentControlService.
++class SteadAgentControlServiceFactory : public ProfileKeyedServiceFactory {
++ public:
++  static SteadAgentControlService* GetForProfile(Profile* profile);
++  static SteadAgentControlServiceFactory* GetInstance();
++
++  static void BindAgentControl(
++      Profile* profile,
++      mojo::PendingReceiver<mojom::AgentControl> receiver);
++  static void BindControlConsole(
++      Profile* profile,
++      mojo::PendingReceiver<mojom::ControlConsole> receiver);
++
++ private:
++  friend base::NoDestructor<SteadAgentControlServiceFactory>;
++
++  SteadAgentControlServiceFactory();
++  ~SteadAgentControlServiceFactory() override;
++
++  // BrowserContextKeyedServiceFactory:
++  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
++      content::BrowserContext* context) const override;
++};
++
++}  // namespace stead
++
++#endif  // CHROME_BROWSER_UI_STEAD_AGENT_CONTROL_STEAD_AGENT_CONTROL_SERVICE_FACTORY_H_
 diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 new file mode 100644
 index 0000000000000..7a3e021c74dab
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
-@@ -0,0 +1,992 @@
+@@ -0,0 +1,1147 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -281,6 +426,7 @@ index 0000000000000..7a3e021c74dab
 +#include "components/sessions/content/session_tab_helper.h"
 +#include "components/sessions/core/session_id.h"
 +#include "content/public/browser/browser_accessibility_state.h"
++#include "content/public/browser/navigation_controller.h"
 +#include "content/public/browser/navigation_handle.h"
 +#include "content/public/browser/render_frame_host.h"
 +#include "content/public/browser/scoped_accessibility_mode.h"
@@ -299,6 +445,7 @@ index 0000000000000..7a3e021c74dab
 +#include "ui/gfx/geometry/rect.h"
 +#include "ui/gfx/geometry/rect_conversions.h"
 +#include "url/gurl.h"
++#include "url/url_constants.h"
 +
 +namespace stead {
 +
@@ -310,10 +457,20 @@ index 0000000000000..7a3e021c74dab
 +constexpr char kStaleRef[] = "stale_ref";
 +constexpr char kSnapshotUnavailable[] = "snapshot_unavailable";
 +constexpr char kAccessibilityActionAccepted[] = "accessibility_action_accepted";
++constexpr char kInvalidUrl[] = "invalid_url";
++constexpr char kBlockedScheme[] = "blocked_scheme";
++constexpr char kNavigationStarted[] = "navigation_started";
 +constexpr int32_t kNoOriginatingAction = 0;
 +constexpr uint32_t kDefaultMaxSnapshotNodes = 2000;
 +constexpr size_t kMaxAuditEntries = 1000;
 +constexpr base::TimeDelta kColdSnapshotTimeout = base::Milliseconds(800);
++
++struct TabEventState {
++  bool found = false;
++  std::string frame_token;
++  std::string url;
++  std::string title;
++};
 +
 +bool SameProfile(Profile* lhs, Profile* rhs) {
 +  if (!lhs || !rhs) {
@@ -343,6 +500,23 @@ index 0000000000000..7a3e021c74dab
 +    return std::string();
 +  }
 +  return frame->GetAXTreeID().ToString();
++}
++
++TabEventState BuildTabEventState(content::WebContents* web_contents) {
++  TabEventState state;
++  state.found = web_contents != nullptr;
++  state.frame_token = CurrentMainFrameToken(web_contents);
++  state.url = WebContentsUrl(web_contents);
++  state.title = WebContentsTitle(web_contents);
++  return state;
++}
++
++bool IsHttpOrHttpsNavigation(const GURL& url) {
++  return url.SchemeIs(url::kHttpScheme) || url.SchemeIs(url::kHttpsScheme);
++}
++
++bool IsFileNavigation(const GURL& url) {
++  return url.SchemeIs(url::kFileScheme);
 +}
 +
 +}  // namespace
@@ -379,13 +553,17 @@ index 0000000000000..7a3e021c74dab
 +  PrivateBrowserControl(const PrivateBrowserControl&) = delete;
 +  PrivateBrowserControl& operator=(const PrivateBrowserControl&) = delete;
 +  ~PrivateBrowserControl();
++  void Shutdown();
 +
 +  std::vector<mojom::TabInfoPtr> ListTabs();
 +  void GetSnapshot(int32_t tab_id,
 +                   int32_t action_id,
 +                   mojom::SnapshotOptionsPtr options,
 +                   SteadAgentControlService::GetSnapshotCallback callback);
-+  content::WebContents* FindTabById(int32_t tab_id);
++  mojom::ActionResultPtr Navigate(int32_t tab_id,
++                                  int32_t action_id,
++                                  const GURL& target_url);
++  TabEventState GetTabEventState(int32_t tab_id);
 +  mojom::ActionResultPtr DispatchAccessibilityAction(
 +      const mojom::NodeRef& ref,
 +      int32_t action_id,
@@ -460,6 +638,7 @@ index 0000000000000..7a3e021c74dab
 +  uint32_t CurrentSnapshotGeneration(int32_t tab_id) const;
 +
 + private:
++  content::WebContents* FindTabById(int32_t tab_id);
 +  void EnsureTabObserved(content::WebContents* web_contents, int32_t tab_id);
 +  void EnsureAccessibilityMode(content::WebContents* web_contents,
 +                               int32_t tab_id);
@@ -534,11 +713,34 @@ index 0000000000000..7a3e021c74dab
 +SteadAgentControlService::PrivateBrowserControl::~PrivateBrowserControl() =
 +    default;
 +
++void SteadAgentControlService::PrivateBrowserControl::Shutdown() {
++  weak_factory_.InvalidateWeakPtrs();
++  observed_tabs_.clear();
++  snapshot_indexes_.clear();
++  snapshot_generations_.clear();
++  scoped_ax_modes_.clear();
++}
++
 +SteadAgentControlService::SteadAgentControlService(Profile* profile)
 +    : profile_(profile),
 +      browser_control_(std::make_unique<PrivateBrowserControl>(this)) {}
 +
 +SteadAgentControlService::~SteadAgentControlService() = default;
++
++void SteadAgentControlService::Shutdown() {
++  weak_factory_.InvalidateWeakPtrs();
++  receivers_.Clear();
++  console_receivers_.Clear();
++  pending_action_by_tab_.clear();
++  pending_confirmations_.clear();
++  approval_grants_.clear();
++  audit_log_.clear();
++  if (browser_control_) {
++    browser_control_->Shutdown();
++  }
++  browser_control_.reset();
++  profile_ = nullptr;
++}
 +
 +void SteadAgentControlService::Bind(
 +    mojo::PendingReceiver<mojom::AgentControl> receiver) {
@@ -704,6 +906,30 @@ index 0000000000000..7a3e021c74dab
 +                             std::move(callback), update);
 +}
 +
++mojom::ActionResultPtr SteadAgentControlService::PrivateBrowserControl::Navigate(
++    int32_t tab_id,
++    int32_t action_id,
++    const GURL& target_url) {
++  content::WebContents* web_contents = FindTabById(tab_id);
++  if (!web_contents) {
++    return broker_->MakeResult(action_id, false, kTabMissing,
++                               "Tab was not found.",
++                               /*stale=*/false, /*needs_snapshot=*/false,
++                               /*needs_confirmation=*/false,
++                               /*target_missing=*/true);
++  }
++
++  content::NavigationController::LoadURLParams params(target_url);
++  params.transition_type = ui::PAGE_TRANSITION_TYPED;
++  web_contents->GetController().LoadURLWithParams(params);
++
++  return broker_->MakeResult(
++      action_id, true, kNavigationStarted, "Navigation was started.",
++      /*stale=*/false, /*needs_snapshot=*/true,
++      /*needs_confirmation=*/false, /*target_missing=*/false,
++      /*blocked_by=*/std::string(), CurrentSnapshotGeneration(tab_id));
++}
++
 +void SteadAgentControlService::PrivateBrowserControl::CompleteSnapshotFromUpdate(
 +    int32_t tab_id,
 +    int32_t action_id,
@@ -797,6 +1023,75 @@ index 0000000000000..7a3e021c74dab
 +  std::move(callback).Run(std::move(result), std::move(snapshot));
 +}
 +
++void SteadAgentControlService::Navigate(int32_t tab_id,
++                                        const std::string& url_string,
++                                        NavigateCallback callback) {
++  const int32_t action_id = NextActionId();
++  const GURL target_url(url_string);
++  const bool is_file_access = target_url.is_valid() &&
++                              IsFileNavigation(target_url);
++  const mojom::ActionClass action_class =
++      is_file_access ? mojom::ActionClass::kFileAccess
++                     : mojom::ActionClass::kNavigation;
++  const std::string operation =
++      is_file_access ? "NavigateFile" : "Navigate";
++  auto finish = [&](mojom::ActionResultPtr result) {
++    RecordAudit(*result, tab_id, action_class, operation);
++    std::move(callback).Run(std::move(result));
++  };
++
++  if (!target_url.is_valid()) {
++    finish(MakeResult(action_id, false, kInvalidUrl, "URL is invalid.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false,
++                      /*target_missing=*/false));
++    return;
++  }
++
++  // Allow only ordinary web navigations by default. Local files are supported
++  // but confirmation-gated; eval-like and internal schemes stay blocked until
++  // they have dedicated broker policy.
++  if (!IsHttpOrHttpsNavigation(target_url) &&
++      !IsFileNavigation(target_url)) {
++    finish(MakeResult(action_id, false, kBlockedScheme,
++                      "URL scheme is not allowed for agent navigation.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false,
++                      /*target_missing=*/false));
++    return;
++  }
++
++  const TabEventState event_state =
++      browser_control_->GetTabEventState(tab_id);
++  if (!event_state.found) {
++    finish(MakeResult(action_id, false, kTabMissing, "Tab was not found.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false,
++                      /*target_missing=*/true));
++    return;
++  }
++
++  mojom::ActionResultPtr gate =
++      MaybeGateAction(action_id, tab_id, action_class, operation);
++  if (gate) {
++    finish(std::move(gate));
++    return;
++  }
++
++  pending_action_by_tab_[tab_id] = action_id;
++  mojom::ActionResultPtr result =
++      browser_control_->Navigate(tab_id, action_id, target_url);
++  if (!result->ok) {
++    pending_action_by_tab_.erase(tab_id);
++  } else {
++    EmitEvent(mojom::ControlEventType::kActionDispatched, tab_id,
++              event_state.frame_token, action_id, target_url.spec(),
++              event_state.title, kNavigationStarted, operation);
++  }
++
++  finish(std::move(result));
++}
++
 +void SteadAgentControlService::Focus(mojom::NodeRefPtr ref,
 +                                     FocusCallback callback) {
 +  std::move(callback).Run(
@@ -851,6 +1146,11 @@ index 0000000000000..7a3e021c74dab
 +  }
 +
 +  return nullptr;
++}
++
++TabEventState SteadAgentControlService::PrivateBrowserControl::GetTabEventState(
++    int32_t tab_id) {
++  return BuildTabEventState(FindTabById(tab_id));
 +}
 +
 +void SteadAgentControlService::PrivateBrowserControl::EnsureTabObserved(
@@ -977,12 +1277,12 @@ index 0000000000000..7a3e021c74dab
 +      browser_control_->DispatchAccessibilityAction(*ref, action_id, action,
 +                                                    value);
 +  if (result->ok) {
-+    content::WebContents* web_contents = browser_control_->FindTabById(tab_id);
++    const TabEventState event_state =
++        browser_control_->GetTabEventState(tab_id);
 +    pending_action_by_tab_[tab_id] = action_id;
 +    EmitEvent(mojom::ControlEventType::kActionDispatched, tab_id,
-+              ref->frame->frame_token, action_id, WebContentsUrl(web_contents),
-+              WebContentsTitle(web_contents), kAccessibilityActionAccepted,
-+              operation);
++              ref->frame->frame_token, action_id, event_state.url,
++              event_state.title, kAccessibilityActionAccepted, operation);
 +  }
 +
 +  return finish(std::move(result));
@@ -1002,10 +1302,10 @@ index 0000000000000..7a3e021c74dab
 +  }
 +
 +  const int32_t originating_action_id = TakePendingActionForTab(tab_id);
-+  content::WebContents* web_contents = browser_control_->FindTabById(tab_id);
++  const TabEventState event_state = browser_control_->GetTabEventState(tab_id);
 +  EmitEvent(mojom::ControlEventType::kNavigated, tab_id, frame_token,
 +            originating_action_id, navigation_handle->GetURL().spec(),
-+            WebContentsTitle(web_contents),
++            event_state.title,
 +            navigation_handle->IsInPrimaryMainFrame() ? "primary_frame"
 +                                                      : "subframe",
 +            navigation_handle->IsErrorPage() ? "error_page" : std::string());
@@ -1251,7 +1551,7 @@ new file mode 100644
 index 0000000000000..c1c7d850f8a48
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,168 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1269,6 +1569,7 @@ index 0000000000000..c1c7d850f8a48
 +#include "base/memory/weak_ptr.h"
 +#include "base/time/time.h"
 +#include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
++#include "components/keyed_service/core/keyed_service.h"
 +#include "mojo/public/cpp/bindings/pending_receiver.h"
 +#include "mojo/public/cpp/bindings/pending_remote.h"
 +#include "mojo/public/cpp/bindings/receiver_set.h"
@@ -1296,13 +1597,16 @@ index 0000000000000..c1c7d850f8a48
 +// This service intentionally exposes only semantic, ref-aware browser actions.
 +// Synthetic input, renderer Eval, screenshot reads, and credential APIs should
 +// be added here only after the broker policy/audit/taint path exists for them.
-+class SteadAgentControlService : public mojom::AgentControl,
++class SteadAgentControlService : public KeyedService,
++                                public mojom::AgentControl,
 +                                public mojom::ControlConsole {
 + public:
 +  explicit SteadAgentControlService(Profile* profile);
 +  SteadAgentControlService(const SteadAgentControlService&) = delete;
 +  SteadAgentControlService& operator=(const SteadAgentControlService&) = delete;
 +  ~SteadAgentControlService() override;
++
++  void Shutdown() override;
 +
 +  void Bind(mojo::PendingReceiver<mojom::AgentControl> receiver);
 +  void BindConsole(mojo::PendingReceiver<mojom::ControlConsole> receiver);
@@ -1313,6 +1617,9 @@ index 0000000000000..c1c7d850f8a48
 +  void GetSnapshot(int32_t tab_id,
 +                   mojom::SnapshotOptionsPtr options,
 +                   GetSnapshotCallback callback) override;
++  void Navigate(int32_t tab_id,
++                const std::string& url,
++                NavigateCallback callback) override;
 +  void Focus(mojom::NodeRefPtr ref, FocusCallback callback) override;
 +  void Click(mojom::NodeRefPtr ref, ClickCallback callback) override;
 +  void Fill(mojom::NodeRefPtr ref,
