@@ -1,0 +1,1055 @@
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index 4df3401fdbb42..bba11ffb8281e 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -258,6 +258,7 @@ static_library("ui") {
+     ":browser_element_identifiers",
+     ":ui_features",
+     ":url_identity",
++    "//chrome/browser/ui/stead/agent_control",
+     "//chrome/app:command_ids",
+     "//chrome/app/theme:chrome_unscaled_resources",
+     "//chrome/app/vector_icons",
+diff --git a/chrome/browser/ui/stead/agent_control/BUILD.gn b/chrome/browser/ui/stead/agent_control/BUILD.gn
+new file mode 100644
+index 0000000000000..f9f3cf0ea8747
+--- /dev/null
++++ b/chrome/browser/ui/stead/agent_control/BUILD.gn
+@@ -0,0 +1,33 @@
++# Copyright 2026 The Stead Authors
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++import("//mojo/public/tools/bindings/mojom.gni")
++
++mojom("mojo_bindings") {
++  sources = [ "agent_control.mojom" ]
++
++  public_deps = [ "//ui/gfx/geometry/mojom" ]
++}
++
++source_set("agent_control") {
++  sources = [
++    "stead_agent_control_service.cc",
++    "stead_agent_control_service.h",
++  ]
++
++  deps = [
++    ":mojo_bindings",
++    "//base",
++    "//chrome/browser/profiles:profile",
++    "//chrome/browser/ui/browser_window",
++    "//chrome/browser/ui/tabs:tab_strip",
++    "//components/sessions",
++    "//components/sessions:session_id",
++    "//content/public/browser",
++    "//mojo/public/cpp/bindings",
++    "//ui/accessibility",
++    "//ui/gfx/geometry",
++    "//url",
++  ]
++}
+diff --git a/chrome/browser/ui/stead/agent_control/agent_control.mojom b/chrome/browser/ui/stead/agent_control/agent_control.mojom
+new file mode 100644
+index 0000000000000..4cbb02c943bdb
+--- /dev/null
++++ b/chrome/browser/ui/stead/agent_control/agent_control.mojom
+@@ -0,0 +1,147 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++module stead.mojom;
++
++import "ui/gfx/geometry/mojom/geometry.mojom";
++
++// Stable public frame identity for agent-facing refs.
++//
++// The MVP backs frame_token with the main frame's AXTreeID string and rejects
++// mismatches as stale. The contract is intentionally wider than the first
++// implementation so OOPIF routing can move to per-frame RFH tokens without
++// changing NodeRef.
++struct FrameRef {
++  int32 tab_id;
++  string frame_token;
++  uint32 snapshot_generation;
++};
++
++struct NodeRef {
++  FrameRef frame;
++  int32 ax_node_id;
++};
++
++struct AxNode {
++  NodeRef ref;
++
++  string role;
++  string name;
++
++  bool has_value;
++  string value;
++
++  bool has_checked;
++  string checked;
++
++  bool clickable;
++  bool editable;
++  bool focused;
++  bool disabled;
++
++  // AX relative bounds, not screen coordinates. Coordinate fallback must apply
++  // the AX tree/frame transform before using these for synthetic input.
++  bool has_bounds;
++  gfx.mojom.Rect bounds;
++
++  array<AxNode> children;
++};
++
++struct SnapshotOptions {
++  // 0 means the service default. The cap keeps very large AX trees bounded for
++  // model latency and IPC pressure.
++  uint32 max_nodes;
++  bool include_bounds;
++  bool include_values;
++};
++
++struct Snapshot {
++  int32 tab_id;
++  string url;
++  string title;
++  uint32 generation;
++  uint32 node_count;
++  bool truncated;
++  uint64 capture_time_us;
++  AxNode root;
++};
++
++struct TabInfo {
++  int32 tab_id;
++  string url;
++  string title;
++  bool active;
++
++  // Coarse hint only. The model never receives cookies, account labels,
++  // usernames, or credential metadata through tab listing.
++  bool likely_authenticated;
++};
++
++struct ActionResult {
++  int32 action_id;
++
++  // For actions, ok means the browser accepted the request for dispatch. It
++  // does not prove that page state changed; callers should observe events or
++  // re-snapshot when needs_snapshot is true.
++  bool ok;
++  string code;
++  string message;
++
++  bool stale;
++  bool needs_snapshot;
++  bool needs_confirmation;
++  bool target_missing;
++  string blocked_by;
++
++  uint32 new_generation;
++};
++
++enum ControlEventType {
++  kUnknown,
++  kNavigated,
++  kTabClosed,
++  kActionDispatched,
++};
++
++struct EventMeta {
++  int32 event_id;
++  uint64 sequence;
++  int32 tab_id;
++  string frame_token;
++  int32 originating_action_id;
++};
++
++struct ControlEvent {
++  EventMeta meta;
++  ControlEventType type;
++
++  string url;
++  string title;
++  string code;
++  string message;
++};
++
++interface ControlObserver {
++  OnEvent(ControlEvent event);
++};
++
++// AgentControl is the broker-facing surface. Raw BrowserControl primitives stay
++// private to the broker; WebUI console surfaces must not bind this interface
++// directly unless they are acting as the broker.
++interface AgentControl {
++  Observe(pending_remote<ControlObserver> observer);
++
++  // Read-only perception.
++  ListTabs() => (array<TabInfo> tabs);
++  GetSnapshot(int32 tab_id, SnapshotOptions? options)
++      => (ActionResult result, Snapshot? snapshot);
++
++  // Semantic AX actions. These route through RenderFrameHost AX actions rather
++  // than synthetic input so the first implementation remains observable and
++  // ref/staleness-aware.
++  Focus(NodeRef ref) => (ActionResult result);
++  Click(NodeRef ref) => (ActionResult result);
++  Fill(NodeRef ref, string value) => (ActionResult result);
++  ScrollIntoView(NodeRef ref) => (ActionResult result);
++};
+diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+new file mode 100644
+index 0000000000000..7a3e021c74dab
+--- /dev/null
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+@@ -0,0 +1,691 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
++
++#include <cstdint>
++#include <memory>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/containers/flat_set.h"
++#include "base/functional/bind.h"
++#include "base/location.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/time/time.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "components/sessions/content/session_tab_helper.h"
++#include "components/sessions/core/session_id.h"
++#include "content/public/browser/browser_accessibility_state.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/scoped_accessibility_mode.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "ui/accessibility/ax_action_data.h"
++#include "ui/accessibility/ax_enum_util.h"
++#include "ui/accessibility/ax_enums.mojom.h"
++#include "ui/accessibility/ax_mode.h"
++#include "ui/accessibility/ax_node.h"
++#include "ui/accessibility/ax_node_data.h"
++#include "ui/accessibility/ax_tree.h"
++#include "ui/accessibility/ax_tree_data.h"
++#include "ui/accessibility/ax_tree_id.h"
++#include "ui/accessibility/ax_tree_update.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/gfx/geometry/rect_conversions.h"
++#include "url/gurl.h"
++
++namespace stead {
++
++namespace {
++
++constexpr char kOk[] = "ok";
++constexpr char kTabMissing[] = "tab_missing";
++constexpr char kTargetMissing[] = "target_missing";
++constexpr char kStaleRef[] = "stale_ref";
++constexpr char kSnapshotUnavailable[] = "snapshot_unavailable";
++constexpr char kAccessibilityActionAccepted[] = "accessibility_action_accepted";
++constexpr int32_t kNoOriginatingAction = 0;
++constexpr uint32_t kDefaultMaxSnapshotNodes = 2000;
++constexpr base::TimeDelta kColdSnapshotTimeout = base::Milliseconds(800);
++
++bool SameProfile(Profile* lhs, Profile* rhs) {
++  if (!lhs || !rhs) {
++    return false;
++  }
++  return lhs->GetOriginalProfile() == rhs->GetOriginalProfile();
++}
++
++std::string WebContentsTitle(content::WebContents* web_contents) {
++  if (!web_contents) {
++    return std::string();
++  }
++  return base::UTF16ToUTF8(web_contents->GetTitle());
++}
++
++std::string WebContentsUrl(content::WebContents* web_contents) {
++  if (!web_contents) {
++    return std::string();
++  }
++  return web_contents->GetLastCommittedURL().spec();
++}
++
++std::string CurrentMainFrameToken(content::WebContents* web_contents) {
++  content::RenderFrameHost* frame =
++      web_contents ? web_contents->GetPrimaryMainFrame() : nullptr;
++  if (!frame) {
++    return std::string();
++  }
++  return frame->GetAXTreeID().ToString();
++}
++
++}  // namespace
++
++struct SteadAgentControlService::SnapshotBuildState {
++  uint32_t max_nodes = kDefaultMaxSnapshotNodes;
++  bool include_bounds = true;
++  bool include_values = true;
++  uint32_t node_count = 0;
++  bool truncated = false;
++  base::flat_set<int32_t> node_ids;
++
++  bool ReserveNode() {
++    if (node_count >= max_nodes) {
++      truncated = true;
++      return false;
++    }
++    ++node_count;
++    return true;
++  }
++};
++
++struct SteadAgentControlService::SnapshotIndex {
++  uint32_t generation = 0;
++  std::string frame_token;
++  base::flat_set<int32_t> node_ids;
++};
++
++class SteadAgentControlService::ObservedTab
++    : public content::WebContentsObserver {
++ public:
++  ObservedTab(SteadAgentControlService* owner,
++              content::WebContents* web_contents,
++              int32_t tab_id)
++      : content::WebContentsObserver(web_contents),
++        owner_(owner),
++        tab_id_(tab_id) {}
++
++  ObservedTab(const ObservedTab&) = delete;
++  ObservedTab& operator=(const ObservedTab&) = delete;
++  ~ObservedTab() override = default;
++
++  void DidFinishNavigation(
++      content::NavigationHandle* navigation_handle) override {
++    if (!owner_ || !navigation_handle || !navigation_handle->HasCommitted() ||
++        navigation_handle->IsSameDocument()) {
++      return;
++    }
++
++    owner_->OnNavigationCommitted(tab_id_, navigation_handle);
++  }
++
++  void WebContentsDestroyed() override {
++    if (!owner_) {
++      return;
++    }
++
++    owner_->OnTabClosed(tab_id_);
++    owner_->ScheduleForgetObservedTab(tab_id_);
++    owner_ = nullptr;
++  }
++
++ private:
++  raw_ptr<SteadAgentControlService> owner_;
++  int32_t tab_id_;
++};
++
++SteadAgentControlService::SteadAgentControlService(Profile* profile)
++    : profile_(profile) {}
++
++SteadAgentControlService::~SteadAgentControlService() = default;
++
++void SteadAgentControlService::Bind(
++    mojo::PendingReceiver<mojom::AgentControl> receiver) {
++  receivers_.Add(this, std::move(receiver));
++}
++
++void SteadAgentControlService::Observe(
++    mojo::PendingRemote<mojom::ControlObserver> observer) {
++  observers_.Add(std::move(observer));
++}
++
++void SteadAgentControlService::ListTabs(ListTabsCallback callback) {
++  std::vector<mojom::TabInfoPtr> tabs;
++
++  for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
++    if (!window || !SameProfile(window->GetProfile(), profile_)) {
++      continue;
++    }
++
++    TabStripModel* tab_strip = window->GetTabStripModel();
++    if (!tab_strip) {
++      continue;
++    }
++
++    content::WebContents* active_contents = tab_strip->GetActiveWebContents();
++    for (int index = 0; index < tab_strip->count(); ++index) {
++      content::WebContents* contents = tab_strip->GetWebContentsAt(index);
++      if (!contents) {
++        continue;
++      }
++
++      sessions::SessionID tab_id =
++          sessions::SessionTabHelper::IdForTab(contents);
++      if (!tab_id.is_valid()) {
++        continue;
++      }
++
++      EnsureTabObserved(contents, tab_id.id());
++
++      auto tab = mojom::TabInfo::New();
++      tab->tab_id = tab_id.id();
++      tab->url = WebContentsUrl(contents);
++      tab->title = WebContentsTitle(contents);
++      tab->active = contents == active_contents;
++      tab->likely_authenticated = false;
++      tabs.push_back(std::move(tab));
++    }
++  }
++
++  std::move(callback).Run(std::move(tabs));
++}
++
++void SteadAgentControlService::GetSnapshot(
++    int32_t tab_id,
++    mojom::SnapshotOptionsPtr options,
++    GetSnapshotCallback callback) {
++  const int32_t action_id = NextActionId();
++  const base::TimeTicks start_time = base::TimeTicks::Now();
++  content::WebContents* web_contents = FindTabById(tab_id);
++  if (!web_contents) {
++    std::move(callback).Run(
++        MakeResult(action_id, false, kTabMissing, "Tab was not found.",
++                   /*stale=*/false, /*needs_snapshot=*/false,
++                   /*needs_confirmation=*/false, /*target_missing=*/true),
++        nullptr);
++    return;
++  }
++
++  EnsureAccessibilityMode(web_contents, tab_id);
++
++  ui::AXTreeUpdate update =
++      web_contents->RequestAXTreeSnapshotWithinBrowserProcess();
++  ui::AXTree tree;
++  if (!tree.Unserialize(update) || !tree.root()) {
++    const size_t max_nodes =
++        options && options->max_nodes != 0 ? options->max_nodes
++                                           : kDefaultMaxSnapshotNodes;
++    web_contents->RequestAXTreeSnapshot(
++        base::BindOnce(&SteadAgentControlService::CompleteSnapshotFromUpdate,
++                       weak_factory_.GetWeakPtr(), tab_id, action_id,
++                       std::move(options), start_time, std::move(callback)),
++        ui::kAXModeBasic, max_nodes, kColdSnapshotTimeout,
++        content::WebContents::AXTreeSnapshotPolicy::kAll);
++    return;
++  }
++
++  CompleteSnapshotFromUpdate(tab_id, action_id, std::move(options), start_time,
++                             std::move(callback), update);
++}
++
++void SteadAgentControlService::CompleteSnapshotFromUpdate(
++    int32_t tab_id,
++    int32_t action_id,
++    mojom::SnapshotOptionsPtr options,
++    base::TimeTicks start_time,
++    GetSnapshotCallback callback,
++    ui::AXTreeUpdate& update) {
++  content::WebContents* web_contents = FindTabById(tab_id);
++  if (!web_contents) {
++    std::move(callback).Run(
++        MakeResult(action_id, false, kTabMissing, "Tab was not found.",
++                   /*stale=*/false, /*needs_snapshot=*/false,
++                   /*needs_confirmation=*/false, /*target_missing=*/true),
++        nullptr);
++    return;
++  }
++
++  ui::AXTree tree;
++  if (!tree.Unserialize(update) || !tree.root()) {
++    std::move(callback).Run(
++        MakeResult(action_id, false, kSnapshotUnavailable,
++                   "Accessibility snapshot was unavailable.",
++                   /*stale=*/false, /*needs_snapshot=*/true,
++                   /*needs_confirmation=*/false, /*target_missing=*/false),
++        nullptr);
++    return;
++  }
++
++  const uint32_t generation = BumpSnapshotGeneration(tab_id);
++  const std::string frame_token = CurrentMainFrameToken(web_contents);
++  SnapshotBuildState build_state;
++  if (options) {
++    build_state.max_nodes =
++        options->max_nodes == 0 ? kDefaultMaxSnapshotNodes : options->max_nodes;
++    build_state.include_bounds = options->include_bounds;
++    build_state.include_values = options->include_values;
++  }
++  mojom::AxNodePtr root =
++      BuildAxNode(tree, tree.root(), tab_id, frame_token, generation,
++                  &build_state);
++  if (!root) {
++    std::move(callback).Run(
++        MakeResult(action_id, false, kSnapshotUnavailable,
++                   "Accessibility snapshot root was filtered out.",
++                   /*stale=*/false, /*needs_snapshot=*/true,
++                   /*needs_confirmation=*/false, /*target_missing=*/false),
++        nullptr);
++    return;
++  }
++
++  auto snapshot = mojom::Snapshot::New();
++  snapshot->tab_id = tab_id;
++  snapshot->url = WebContentsUrl(web_contents);
++  snapshot->title = WebContentsTitle(web_contents);
++  snapshot->generation = generation;
++  snapshot->node_count = build_state.node_count;
++  snapshot->truncated = build_state.truncated;
++  snapshot->capture_time_us =
++      static_cast<uint64_t>((base::TimeTicks::Now() - start_time)
++                                .InMicroseconds());
++  snapshot->root = std::move(root);
++  auto snapshot_index = std::make_unique<SnapshotIndex>();
++  snapshot_index->generation = generation;
++  snapshot_index->frame_token = frame_token;
++  snapshot_index->node_ids = std::move(build_state.node_ids);
++  snapshot_indexes_[tab_id] = std::move(snapshot_index);
++
++  std::move(callback).Run(
++      MakeResult(action_id, true, kOk, "Snapshot captured.",
++                 /*stale=*/false, /*needs_snapshot=*/false,
++                 /*needs_confirmation=*/false, /*target_missing=*/false,
++                 /*blocked_by=*/std::string(), generation),
++      std::move(snapshot));
++}
++
++void SteadAgentControlService::Focus(mojom::NodeRefPtr ref,
++                                     FocusCallback callback) {
++  std::move(callback).Run(
++      PerformAccessibilityAction(std::move(ref), ax::mojom::Action::kFocus));
++}
++
++void SteadAgentControlService::Click(mojom::NodeRefPtr ref,
++                                     ClickCallback callback) {
++  std::move(callback).Run(PerformAccessibilityAction(
++      std::move(ref), ax::mojom::Action::kDoDefault));
++}
++
++void SteadAgentControlService::Fill(mojom::NodeRefPtr ref,
++                                    const std::string& value,
++                                    FillCallback callback) {
++  std::move(callback).Run(PerformAccessibilityAction(
++      std::move(ref), ax::mojom::Action::kSetValue, value));
++}
++
++void SteadAgentControlService::ScrollIntoView(
++    mojom::NodeRefPtr ref,
++    ScrollIntoViewCallback callback) {
++  std::move(callback).Run(PerformAccessibilityAction(
++      std::move(ref), ax::mojom::Action::kScrollToMakeVisible));
++}
++
++content::WebContents* SteadAgentControlService::FindTabById(int32_t tab_id) {
++  for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
++    if (!window || !SameProfile(window->GetProfile(), profile_)) {
++      continue;
++    }
++
++    TabStripModel* tab_strip = window->GetTabStripModel();
++    if (!tab_strip) {
++      continue;
++    }
++
++    for (int index = 0; index < tab_strip->count(); ++index) {
++      content::WebContents* contents = tab_strip->GetWebContentsAt(index);
++      if (!contents) {
++        continue;
++      }
++
++      sessions::SessionID current_id =
++          sessions::SessionTabHelper::IdForTab(contents);
++      if (current_id.is_valid() && current_id.id() == tab_id) {
++        EnsureTabObserved(contents, tab_id);
++        return contents;
++      }
++    }
++  }
++
++  return nullptr;
++}
++
++void SteadAgentControlService::EnsureTabObserved(
++    content::WebContents* web_contents,
++    int32_t tab_id) {
++  if (!web_contents) {
++    return;
++  }
++
++  if (!observed_tabs_.contains(tab_id)) {
++    observed_tabs_[tab_id] =
++        std::make_unique<ObservedTab>(this, web_contents, tab_id);
++  }
++  EnsureAccessibilityMode(web_contents, tab_id);
++}
++
++void SteadAgentControlService::EnsureAccessibilityMode(
++    content::WebContents* web_contents,
++    int32_t tab_id) {
++  if (!web_contents || scoped_ax_modes_.contains(tab_id)) {
++    return;
++  }
++
++  scoped_ax_modes_[tab_id] =
++      content::BrowserAccessibilityState::GetInstance()
++          ->CreateScopedModeForWebContents(web_contents, ui::kAXModeBasic);
++}
++
++mojom::AxNodePtr SteadAgentControlService::BuildAxNode(
++    const ui::AXTree& tree,
++    ui::AXNode* node,
++    int32_t tab_id,
++    const std::string& frame_token,
++    uint32_t generation,
++    SnapshotBuildState* state) const {
++  if (!node || !state || node->IsInvisibleOrIgnored()) {
++    return nullptr;
++  }
++
++  if (!state->ReserveNode()) {
++    return nullptr;
++  }
++  state->node_ids.insert(node->id());
++
++  const ui::AXNodeData& data = node->data();
++
++  auto out = mojom::AxNode::New();
++  out->ref = mojom::NodeRef::New(
++      mojom::FrameRef::New(tab_id, frame_token, generation), node->id());
++  out->role = ui::ToString(node->GetRole());
++  out->name = data.GetStringAttribute(ax::mojom::StringAttribute::kName);
++  out->has_value = state->include_values &&
++                   data.HasStringAttribute(ax::mojom::StringAttribute::kValue) &&
++                   !data.IsPasswordField();
++  out->value = out->has_value
++                   ? data.GetStringAttribute(ax::mojom::StringAttribute::kValue)
++                   : std::string();
++  out->clickable = data.IsClickable();
++  out->editable = data.IsTextField();
++  out->focused = tree.data().focus_id == node->id();
++  out->disabled =
++      data.GetRestriction() == ax::mojom::Restriction::kDisabled;
++
++  const ax::mojom::CheckedState checked_state = data.GetCheckedState();
++  out->has_checked = checked_state != ax::mojom::CheckedState::kNone;
++  out->checked = out->has_checked ? ui::ToString(checked_state) : std::string();
++
++  out->bounds = state->include_bounds
++                    ? gfx::ToEnclosingRect(data.relative_bounds.bounds)
++                    : gfx::Rect();
++  out->has_bounds = state->include_bounds && !out->bounds.IsEmpty();
++
++  for (ui::AXNode* child : node->children()) {
++    mojom::AxNodePtr child_out =
++        BuildAxNode(tree, child, tab_id, frame_token, generation, state);
++    if (child_out) {
++      out->children.push_back(std::move(child_out));
++    }
++  }
++
++  return out;
++}
++
++mojom::ActionResultPtr SteadAgentControlService::PerformAccessibilityAction(
++    mojom::NodeRefPtr ref,
++    ax::mojom::Action action,
++    const std::string& value) {
++  const int32_t action_id = NextActionId();
++  if (!ref || !ref->frame) {
++    return MakeResult(action_id, false, kTargetMissing,
++                      "Target ref was empty.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false, /*target_missing=*/true);
++  }
++
++  content::WebContents* web_contents = FindTabById(ref->frame->tab_id);
++  if (!web_contents) {
++    return MakeResult(action_id, false, kTabMissing, "Tab was not found.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false, /*target_missing=*/true);
++  }
++
++  if (IsStaleFrame(*ref->frame, web_contents)) {
++    return MakeResult(action_id, false, kStaleRef,
++                      "Target ref is from an old snapshot.",
++                      /*stale=*/true, /*needs_snapshot=*/true,
++                      /*needs_confirmation=*/false, /*target_missing=*/false,
++                      /*blocked_by=*/std::string(),
++                      CurrentSnapshotGeneration(ref->frame->tab_id));
++  }
++
++  if (!SnapshotIndexContains(*ref)) {
++    return MakeResult(action_id, false, kTargetMissing,
++                      "Target node is not present in the latest snapshot.",
++                      /*stale=*/false, /*needs_snapshot=*/true,
++                      /*needs_confirmation=*/false, /*target_missing=*/true,
++                      /*blocked_by=*/std::string(),
++                      CurrentSnapshotGeneration(ref->frame->tab_id));
++  }
++
++  if (!CurrentTreeContainsNode(web_contents, *ref)) {
++    return MakeResult(action_id, false, kTargetMissing,
++                      "Target node is not present in the current AX tree.",
++                      /*stale=*/false, /*needs_snapshot=*/true,
++                      /*needs_confirmation=*/false, /*target_missing=*/true,
++                      /*blocked_by=*/std::string(),
++                      CurrentSnapshotGeneration(ref->frame->tab_id));
++  }
++
++  content::RenderFrameHost* frame = web_contents->GetPrimaryMainFrame();
++  if (!frame) {
++    return MakeResult(action_id, false, kTargetMissing,
++                      "Primary frame was not available.",
++                      /*stale=*/false, /*needs_snapshot=*/true,
++                      /*needs_confirmation=*/false, /*target_missing=*/true,
++                      /*blocked_by=*/std::string(),
++                      CurrentSnapshotGeneration(ref->frame->tab_id));
++  }
++
++  ui::AXActionData action_data;
++  action_data.action = action;
++  action_data.target_tree_id = frame->GetAXTreeID();
++  action_data.target_node_id = ref->ax_node_id;
++  action_data.value = value;
++  frame->AccessibilityPerformAction(action_data);
++
++  pending_action_by_tab_[ref->frame->tab_id] = action_id;
++  EmitEvent(mojom::ControlEventType::kActionDispatched, ref->frame->tab_id,
++            ref->frame->frame_token, action_id, WebContentsUrl(web_contents),
++            WebContentsTitle(web_contents), kAccessibilityActionAccepted,
++            ui::ToString(action));
++
++  return MakeResult(action_id, true, kAccessibilityActionAccepted,
++                    "Accessibility action accepted for dispatch.",
++                    /*stale=*/false, /*needs_snapshot=*/true,
++                    /*needs_confirmation=*/false, /*target_missing=*/false,
++                    /*blocked_by=*/std::string(),
++                    CurrentSnapshotGeneration(ref->frame->tab_id));
++}
++
++void SteadAgentControlService::OnNavigationCommitted(
++    int32_t tab_id,
++    content::NavigationHandle* navigation_handle) {
++  if (!navigation_handle) {
++    return;
++  }
++
++  std::string frame_token;
++  content::RenderFrameHost* frame = navigation_handle->GetRenderFrameHost();
++  if (frame) {
++    frame_token = frame->GetAXTreeID().ToString();
++  }
++
++  const int32_t originating_action_id = TakePendingActionForTab(tab_id);
++  content::WebContents* web_contents = FindTabById(tab_id);
++  EmitEvent(mojom::ControlEventType::kNavigated, tab_id, frame_token,
++            originating_action_id, navigation_handle->GetURL().spec(),
++            WebContentsTitle(web_contents),
++            navigation_handle->IsInPrimaryMainFrame() ? "primary_frame"
++                                                      : "subframe",
++            navigation_handle->IsErrorPage() ? "error_page" : std::string());
++}
++
++void SteadAgentControlService::OnTabClosed(int32_t tab_id) {
++  pending_action_by_tab_.erase(tab_id);
++  snapshot_generations_.erase(tab_id);
++  snapshot_indexes_.erase(tab_id);
++  scoped_ax_modes_.erase(tab_id);
++  EmitEvent(mojom::ControlEventType::kTabClosed, tab_id, std::string(),
++            kNoOriginatingAction, std::string(), std::string(), "tab_closed",
++            std::string());
++}
++
++void SteadAgentControlService::ScheduleForgetObservedTab(int32_t tab_id) {
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(&SteadAgentControlService::ForgetObservedTab,
++                                weak_factory_.GetWeakPtr(), tab_id));
++}
++
++void SteadAgentControlService::ForgetObservedTab(int32_t tab_id) {
++  observed_tabs_.erase(tab_id);
++}
++
++int32_t SteadAgentControlService::TakePendingActionForTab(int32_t tab_id) {
++  const auto pending_action = pending_action_by_tab_.find(tab_id);
++  if (pending_action == pending_action_by_tab_.end()) {
++    return kNoOriginatingAction;
++  }
++
++  const int32_t action_id = pending_action->second;
++  pending_action_by_tab_.erase(pending_action);
++  return action_id;
++}
++
++void SteadAgentControlService::EmitEvent(
++    mojom::ControlEventType type,
++    int32_t tab_id,
++    const std::string& frame_token,
++    int32_t originating_action_id,
++    const std::string& url,
++    const std::string& title,
++    const std::string& code,
++    const std::string& message) {
++  const int32_t event_id = next_event_id_++;
++  const uint64_t sequence = next_event_sequence_++;
++
++  for (auto& observer : observers_) {
++    auto meta =
++        mojom::EventMeta::New(event_id, sequence, tab_id, frame_token,
++                              originating_action_id);
++    auto event = mojom::ControlEvent::New(std::move(meta), type, url, title,
++                                          code, message);
++    observer->OnEvent(std::move(event));
++  }
++}
++
++bool SteadAgentControlService::IsStaleFrame(
++    const mojom::FrameRef& frame_ref,
++    content::WebContents* web_contents) const {
++  if (frame_ref.snapshot_generation !=
++      CurrentSnapshotGeneration(frame_ref.tab_id)) {
++    return true;
++  }
++
++  return frame_ref.frame_token != CurrentMainFrameToken(web_contents);
++}
++
++bool SteadAgentControlService::SnapshotIndexContains(
++    const mojom::NodeRef& ref) const {
++  if (!ref.frame) {
++    return false;
++  }
++
++  const auto index = snapshot_indexes_.find(ref.frame->tab_id);
++  if (index == snapshot_indexes_.end() || !index->second) {
++    return false;
++  }
++
++  return index->second->generation == ref.frame->snapshot_generation &&
++         index->second->frame_token == ref.frame->frame_token &&
++         index->second->node_ids.contains(ref.ax_node_id);
++}
++
++bool SteadAgentControlService::CurrentTreeContainsNode(
++    content::WebContents* web_contents,
++    const mojom::NodeRef& ref) const {
++  if (!web_contents || !ref.frame) {
++    return false;
++  }
++
++  ui::AXTreeUpdate update =
++      web_contents->RequestAXTreeSnapshotWithinBrowserProcess();
++  ui::AXTree tree;
++  if (!tree.Unserialize(update) || !tree.root()) {
++    return false;
++  }
++
++  return tree.GetFromId(ref.ax_node_id) != nullptr;
++}
++
++uint32_t SteadAgentControlService::CurrentSnapshotGeneration(
++    int32_t tab_id) const {
++  const auto generation = snapshot_generations_.find(tab_id);
++  if (generation == snapshot_generations_.end()) {
++    return 0;
++  }
++  return generation->second;
++}
++
++uint32_t SteadAgentControlService::BumpSnapshotGeneration(int32_t tab_id) {
++  uint32_t& generation = snapshot_generations_[tab_id];
++  ++generation;
++  return generation;
++}
++
++int32_t SteadAgentControlService::NextActionId() {
++  return next_action_id_++;
++}
++
++mojom::ActionResultPtr SteadAgentControlService::MakeResult(
++    int32_t action_id,
++    bool ok,
++    const std::string& code,
++    const std::string& message,
++    bool stale,
++    bool needs_snapshot,
++    bool needs_confirmation,
++    bool target_missing,
++    const std::string& blocked_by,
++    uint32_t new_generation) const {
++  return mojom::ActionResult::New(action_id, ok, code, message, stale,
++                                  needs_snapshot, needs_confirmation,
++                                  target_missing, blocked_by, new_generation);
++}
++
++}  // namespace stead
+diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
+new file mode 100644
+index 0000000000000..c1c7d850f8a48
+--- /dev/null
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
+@@ -0,0 +1,148 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_STEAD_AGENT_CONTROL_STEAD_AGENT_CONTROL_SERVICE_H_
++#define CHROME_BROWSER_UI_STEAD_AGENT_CONTROL_STEAD_AGENT_CONTROL_SERVICE_H_
++
++#include <cstdint>
++#include <memory>
++#include <string>
++
++#include "base/containers/flat_map.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/time/time.h"
++#include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
++#include "mojo/public/cpp/bindings/pending_receiver.h"
++#include "mojo/public/cpp/bindings/pending_remote.h"
++#include "mojo/public/cpp/bindings/receiver_set.h"
++#include "mojo/public/cpp/bindings/remote_set.h"
++#include "ui/accessibility/ax_enums.mojom-forward.h"
++
++class Profile;
++
++namespace content {
++class NavigationHandle;
++class ScopedAccessibilityMode;
++class WebContents;
++}  // namespace content
++
++namespace ui {
++class AXNode;
++class AXTree;
++struct AXTreeUpdate;
++}  // namespace ui
++
++namespace stead {
++
++// Browser-resident AgentControl implementation for Stead's broker layer.
++//
++// This service intentionally exposes only semantic, ref-aware browser actions.
++// Synthetic input, renderer Eval, screenshot reads, and credential APIs should
++// be added here only after the broker policy/audit/taint path exists for them.
++class SteadAgentControlService : public mojom::AgentControl {
++ public:
++  explicit SteadAgentControlService(Profile* profile);
++  SteadAgentControlService(const SteadAgentControlService&) = delete;
++  SteadAgentControlService& operator=(const SteadAgentControlService&) = delete;
++  ~SteadAgentControlService() override;
++
++  void Bind(mojo::PendingReceiver<mojom::AgentControl> receiver);
++
++  // mojom::AgentControl:
++  void Observe(mojo::PendingRemote<mojom::ControlObserver> observer) override;
++  void ListTabs(ListTabsCallback callback) override;
++  void GetSnapshot(int32_t tab_id,
++                   mojom::SnapshotOptionsPtr options,
++                   GetSnapshotCallback callback) override;
++  void Focus(mojom::NodeRefPtr ref, FocusCallback callback) override;
++  void Click(mojom::NodeRefPtr ref, ClickCallback callback) override;
++  void Fill(mojom::NodeRefPtr ref,
++            const std::string& value,
++            FillCallback callback) override;
++  void ScrollIntoView(mojom::NodeRefPtr ref,
++                      ScrollIntoViewCallback callback) override;
++
++ private:
++  class ObservedTab;
++  struct SnapshotBuildState;
++  struct SnapshotIndex;
++
++  content::WebContents* FindTabById(int32_t tab_id);
++  void EnsureTabObserved(content::WebContents* web_contents, int32_t tab_id);
++  void EnsureAccessibilityMode(content::WebContents* web_contents,
++                               int32_t tab_id);
++
++  mojom::AxNodePtr BuildAxNode(const ui::AXTree& tree,
++                               ui::AXNode* node,
++                               int32_t tab_id,
++                               const std::string& frame_token,
++                               uint32_t generation,
++                               SnapshotBuildState* state) const;
++  void CompleteSnapshotFromUpdate(int32_t tab_id,
++                                  int32_t action_id,
++                                  mojom::SnapshotOptionsPtr options,
++                                  base::TimeTicks start_time,
++                                  GetSnapshotCallback callback,
++                                  ui::AXTreeUpdate& update);
++
++  mojom::ActionResultPtr PerformAccessibilityAction(
++      mojom::NodeRefPtr ref,
++      ax::mojom::Action action,
++      const std::string& value = std::string());
++
++  bool IsStaleFrame(const mojom::FrameRef& frame_ref,
++                    content::WebContents* web_contents) const;
++  bool SnapshotIndexContains(const mojom::NodeRef& ref) const;
++  bool CurrentTreeContainsNode(content::WebContents* web_contents,
++                               const mojom::NodeRef& ref) const;
++  void OnNavigationCommitted(int32_t tab_id,
++                             content::NavigationHandle* navigation_handle);
++  void OnTabClosed(int32_t tab_id);
++  void ScheduleForgetObservedTab(int32_t tab_id);
++  void ForgetObservedTab(int32_t tab_id);
++  int32_t TakePendingActionForTab(int32_t tab_id);
++  void EmitEvent(mojom::ControlEventType type,
++                 int32_t tab_id,
++                 const std::string& frame_token,
++                 int32_t originating_action_id,
++                 const std::string& url,
++                 const std::string& title,
++                 const std::string& code,
++                 const std::string& message);
++  uint32_t CurrentSnapshotGeneration(int32_t tab_id) const;
++  uint32_t BumpSnapshotGeneration(int32_t tab_id);
++  int32_t NextActionId();
++
++  mojom::ActionResultPtr MakeResult(
++      int32_t action_id,
++      bool ok,
++      const std::string& code,
++      const std::string& message,
++      bool stale,
++      bool needs_snapshot,
++      bool needs_confirmation,
++      bool target_missing,
++      const std::string& blocked_by = std::string(),
++      uint32_t new_generation = 0) const;
++
++  raw_ptr<Profile> profile_;
++  mojo::ReceiverSet<mojom::AgentControl> receivers_;
++  mojo::RemoteSet<mojom::ControlObserver> observers_;
++
++  base::flat_map<int32_t, std::unique_ptr<content::ScopedAccessibilityMode>>
++      scoped_ax_modes_;
++  base::flat_map<int32_t, uint32_t> snapshot_generations_;
++  base::flat_map<int32_t, std::unique_ptr<ObservedTab>> observed_tabs_;
++  base::flat_map<int32_t, std::unique_ptr<SnapshotIndex>> snapshot_indexes_;
++  base::flat_map<int32_t, int32_t> pending_action_by_tab_;
++  int32_t next_action_id_ = 1;
++  int32_t next_event_id_ = 1;
++  uint64_t next_event_sequence_ = 1;
++  base::WeakPtrFactory<SteadAgentControlService> weak_factory_{this};
++};
++
++}  // namespace stead
++
++#endif  // CHROME_BROWSER_UI_STEAD_AGENT_CONTROL_STEAD_AGENT_CONTROL_SERVICE_H_
