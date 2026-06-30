@@ -102,9 +102,15 @@ develop (C++ wired into Blink/content — can't be faked dry like the WebUI).
 A hybrid pipeline; cheap tiers first, expensive last.
 
 **Tier 1 — accessibility-tree snapshot (primary):**
-- `content::WebContents::RequestAXTreeSnapshotWithinBrowserProcess()` →
-  `ui::AXTreeUpdate` **synchronously** (when AX mode is on). Rebuild into
-  `ui::AXTree`, walk `ui::AXNode`s. (Async: `RequestAXTreeSnapshot(cb)`.)
+- Enable scoped `ui::kAXModeBasic`, then read each active frame's live
+  browser-side `AXTreeManager` via `RenderFrameHost::GetAXTreeID()`. Walk the
+  frame-local `ui::AXTree` roots and stitch child frames by
+  `AXTreeManager::ForChildTree(...)` / `kChildTreeId`.
+- Do **not** mint actionable refs from Chromium's combined snapshot output:
+  `AXTreeCombiner` renumbers node ids across trees, which is correct for a
+  single display tree but wrong for `AccessibilityPerformAction` against a
+  frame-local `AXTreeID`. `RequestAXTreeSnapshot(cb)` is acceptable as a cold
+  AX warmup/retry signal; its combined result is not the source of `NodeRef`s.
 - Per node from `AXNode`/`AXNodeData`:
   - `data().role` → `ax::mojom::Role` (string via `ui::ToString`).
   - **`data().IsClickable()`** — native clickability that *should* include JS
@@ -116,13 +122,24 @@ A hybrid pipeline; cheap tiers first, expensive last.
     `kFocusable` state; `GetRestriction()==kDisabled`.
   - **strip** `IsIgnored()`/`IsInvisibleOrIgnored()`, collapse
     `kGenericContainer`/`kNone` → the "70%-smaller / high-signal" filter (the AX
-    tree is already pre-semantic, so we start cleaner than a DOM dump).
-  - bounds via `BrowserAccessibility::GetBoundsRect(...)`.
+    tree is already pre-semantic, so we start cleaner than a DOM dump). Ignored
+    containers are collapsed with Chromium's unignored child traversal, not
+    pruned wholesale.
+  - bounds via `AXTree::GetTreeBounds(...)`, treated as tree/viewport geometry
+    for screenshots and a **hint** for probes. Do not treat these as universal
+    screen coordinates; node screenshots transform the owning frame's bounds
+    through `RenderWidgetHostView::TransformPointToRootCoordSpaceF(...)` before
+    `CopyFromSurface`, and fail closed if the transform is unavailable.
+    OOPIF/iframe local probing still needs DOM hints.
 
 **Tier 2 — targeted DOM/style probe (for ambiguous refs only):** an on-demand,
 *per-node* isolated-world JS probe (computed style, geometry, occlusion via
-`elementsFromPoint`) to disambiguate hostile/custom UIs the AX tree distorts.
-Cheap because it's targeted, not a full-page walk.
+`elementsFromPoint`) to disambiguate hostile/custom UIs the AX tree distorts. It
+uses AX bounds as a fast hit-test hint, then falls back to DOM hints
+(`id`/`name`, or `tag+class`), and can still run when AX has no usable bounds if
+strong hints exist. Tag-only/class-only fallback is too broad and should fail
+closed. Iframe/OOPIF coordinate-space ambiguity should not make the probe report
+a false miss. Cheap because it's targeted, not a full-page walk.
 
 **Tier 3 — screenshot + vision (Computer Use):** last resort for AX-opaque
 custom widgets. (`Screenshot` op, optionally annotated with refs.)
@@ -143,8 +160,22 @@ Why: across **OOPIFs / cross-origin iframes** node ids aren't globally unique;
 trees regenerate (stale-ref detection via `snapshot_generation`); actions must
 route to the owning `RenderFrameHost` (via `frame_token`). **Node** ops take a
 `NodeRef`; **`evaluate`/frame** ops take a `FrameRef`. MVP populates the
-single-main-frame case; the contract carries the split from day 1 so it never
-has to change.
+main-frame case first, but when Chromium exposes a child frame through AX
+`kChildTreeId`, descendants inherit that child `frame_token`. Snapshot indexes
+are keyed by `{frame_token, ax_node_id}`, never by bare node id, and `ax_node_id`
+is always the owning frame tree's native node id, never an `AXTreeCombiner`
+renumbered id. The contract carries the OOPIF shape from day 1.
+
+Committed navigations bump/clear the tab's snapshot generation immediately so
+old refs become stale before the next action. Same-document navigations still
+stale refs, but do not clear credential taint. Taint is document/RFH-token
+scoped: active tainted documents block reads and raw input; inactive
+back-forward-cache documents keep their taint but do not block the active page,
+and become blocking again if restored. `RenderFrameHost` deletion or explicit
+post-submit cleanup clears that frame's taint. Same-RFH document replacement
+needs a lifecycle-accurate hook before it may clear taint; `DidFinishNavigation`
+alone is not authoritative enough because Chromium can keep the old document in
+BFCache.
 
 ---
 
@@ -155,6 +186,9 @@ has to change.
    (routed to the ref's frame). No coordinate math, cross-frame, trusted:
    `kDoDefault` (click) · `kFocus` · `kSetValue`/`kReplaceSelectedText` (fill) ·
    `kScrollToMakeVisible` · `kScrollUp/Down` · `kShowContextMenu`.
+   Dispatch first checks the latest snapshot index and the frame's live
+   `AXTreeManager` by `frame_token`, so `ok=true` means "accepted for dispatch,"
+   not "blindly sent to a possibly-dead node."
 2. **Synthetic real input (fallback), by coords:**
    `RenderWidgetHost::ForwardMouseEvent / ForwardKeyboardEvent / ForwardWheelEvent
    / ForwardGestureEvent` (`blink::WebMouseEvent` etc.). **Trusted**
@@ -180,9 +214,18 @@ correlated, and ordered** — part of agent correctness *and* audit:
 - Variants: `navigated{url, same_doc}` · `popup{new_tab_id}` ·
   `download{filename, mime, bytes}` · `dialog{type, message, handle}` (alert/
   confirm/prompt/beforeunload — needs accept/dismiss) · `permission_prompt{kind}`
-  · `auth_redirect{origin}` · `file_chooser{handle}` · `tab_closed`.
+  · `auth_redirect{origin}` · `file_chooser{handle}` · `tab_opened` ·
+  `tab_closed` · `action_dispatched` (instrumentation).
 
-Delivered **in order** over a `ControlObserver` (one method per variant).
+Delivered **in order** over a `ControlObserver` as `OnEvent(ControlEvent)`: one
+typed envelope with `ControlEventType` plus typed optional payload fields. This
+is still not `kind: string`; the enum and payload structs are the contract.
+Subscribing to `ControlObserver` also warms observation for current profile tabs
+and enables the scoped AX mode, so event capture does not depend on a prior
+`ListTabs()` call.
+High-frequency progress events are coalesced before they reach the observer:
+downloads emit creation, terminal/state changes, and coarse byte-progress
+milestones rather than every backend progress tick.
 
 ---
 
@@ -234,6 +277,11 @@ So the raw primitives are **private**, and everyone talks to a **broker**:
   cancel; subscribe to events *to display*. **No `Click`/`Fill`/`Eval`** — the
   WebUI structurally cannot drive the page.
 
+Implementation wiring: the Stead WebUI controllers (sidebar, full-page chat,
+new-tab) register only `ControlConsole` with Chromium's WebUI binder map /
+broker registry. `AgentControl` is not registered for WebUI; it is the
+brain-side broker surface.
+
 ```
 struct FrameRef { int32 tab_id; string frame_token; uint32 snapshot_generation; };
                                   // frame_token maps internally to AXTreeID/RFH
@@ -242,8 +290,12 @@ struct NodeRef  { FrameRef frame; int32 ax_node_id; };
 struct AxNode { NodeRef ref; string role; string name; string? value;
   bool clickable;            // AXNodeData::IsClickable() — a HYPOTHESIS (§6/§16)
   bool editable; bool focused; bool disabled; string? checked;
-  gfx.mojom.Rect? bounds; array<AxNode> children; };
+  gfx.mojom.Rect? bounds;    // AX tree/viewport geometry; not screen coords
+  array<AxNode> children; };
 struct Snapshot { int32 tab_id; string url; string title; uint32 generation; AxNode root; };
+struct FileChooserInfo { string handle; string state; string mode; string title;
+  string default_file_name; array<string> accept_types; bool allow_multiple;
+  bool upload_folder; bool need_local_path; bool use_media_capture; };
 
 struct ActionResult {        // shapes the agent loop
   int32 action_id;           // the events this action causes reference it
@@ -258,14 +310,33 @@ struct ReadResult { bool ok; string? blocked_by; };  // gated/tainted reads can 
 // EventMeta.sequence is PROFILE-GLOBAL monotonic (one ordering across all tabs),
 // so cross-tab causality (click in tab A -> popup tab B) and audit replay are
 // unambiguous. { event_id, sequence, tab_id, frame_token, originating_action_id? }.
+enum ControlEventType { Navigated, TabOpened, TabClosed, Popup, Download,
+  Dialog, PermissionPrompt, AuthRedirect, FileChooser, ActionDispatched };
+struct ControlEvent { EventMeta meta; ControlEventType type;
+  string url; string title; string code; string message; int32 related_tab_id;
+  DownloadInfo? download; DialogInfo? dialog;
+  PermissionPromptInfo? permission_prompt; AuthRedirectInfo? auth_redirect;
+  FileChooserInfo? file_chooser; };
 interface ControlObserver {
-  OnNavigated(EventMeta m, url.mojom.Url url, bool same_doc);
-  OnDialog(EventMeta m, DialogInfo dialog);          // accept/dismiss via handle
-  OnDownload(EventMeta m, DownloadInfo dl);
-  OnPopup(EventMeta m, int32 new_tab_id);
-  OnTabClosed(EventMeta m);
-  // ...permission_prompt, auth_redirect, file_chooser...
+  OnEvent(ControlEvent event);
 };
+
+Implementation note: the native layer now observes Chromium
+`PermissionRequestManager` prompts per tab and emits typed, ordered
+`permission_prompt` events. It is perception-only: the event stream reports
+shown/removed/finalized/decided states, but accepting/denying stays out of
+`AgentControl` until the broker policy surface explicitly grows that capability.
+Committed primary-frame auth redirects are also surfaced as typed events, but
+privacy-scoped to `{origin, provider_hint, reason}` so OAuth/SAML query tokens
+and account-identifying URL parameters are not exposed to the model.
+The dialog path currently covers `beforeunload` via `WebContentsObserver`;
+alert/confirm/prompt are observed through a minimal production observer hook on
+Chromium's `TabModalDialogManager`; active dialogs get opaque broker handles and
+are accepted/dismissed only through `AgentControl.HandleDialog`.
+File chooser perception follows the same brokered-handle pattern via
+Chromium's `FileSelectHelper`: `file_chooser` events expose mode/title/accept
+metadata but never local paths, and selection/cancel flows only through
+`AgentControl.HandleFileChooser`.
 
 struct CredentialRef { string handle; string label; string source; bool has_totp; bool has_passkey; };
                        // handle = opaque; label = coarse/user-set; NO username until approved (§15)
@@ -280,12 +351,19 @@ interface AgentControl {
   Fill(NodeRef ref, string text) => (ActionResult r);
   Focus(NodeRef ref) => (ActionResult r);
   ScrollIntoView(NodeRef ref) => (ActionResult r);
+  ShowContextMenu(NodeRef ref) => (ActionResult r);
+  MouseMove(int32 tab_id, gfx.mojom.Point pt) => (ActionResult r);  // HIGH-RISK (§12)
+  MouseDown(int32 tab_id, gfx.mojom.Point pt, int32 button, int32 click_count) => (ActionResult r);  // HIGH-RISK
+  MouseUp(int32 tab_id, gfx.mojom.Point pt, int32 button, int32 click_count) => (ActionResult r);  // HIGH-RISK
   MouseClick(int32 tab_id, gfx.mojom.Point pt, int32 button, int32 click_count) => (ActionResult r);  // HIGH-RISK (§12)
+  MouseDrag(int32 tab_id, gfx.mojom.Point from, gfx.mojom.Point to, int32 button, int32 steps) => (ActionResult r);  // HIGH-RISK
   Key(int32 tab_id, string key, int32 modifiers) => (ActionResult r);  // HIGH-RISK
-  Scroll(int32 tab_id, int32 dx, int32 dy) => (ActionResult r);
+  Scroll(int32 tab_id, int32 dx, int32 dy) => (ActionResult r);  // HIGH-RISK raw wheel input (§12)
   Navigate(int32 tab_id, url.mojom.Url url) => (ActionResult r);
   OpenTab(url.mojom.Url url, bool agent_owned) => (ActionResult r, int32 tab_id);  // navigation-class, audited
   CloseTab(int32 tab_id) => (ActionResult r);
+  HandleDialog(string handle, bool accept, string prompt_text) => (ActionResult r); // audited; confirm accept gates
+  HandleFileChooser(string handle, array<string> paths) => (ActionResult r); // file-access gated; empty paths = cancel
   ListTabs() => (array<TabInfo> tabs);                       // COARSE auth hint only (§14)
   Eval(FrameRef frame, string js) => (ActionResult r, string? json_result);  // HIGH-RISK: gated+audited (§12); null if denied/tainted (§15)
   // credentials — never-reveal; origin-scoped + intent-gated (§15)
@@ -323,22 +401,35 @@ single chokepoint; the WebUI structurally can't drive, and the brain can't reach
 - **Confirmation gates** for high-risk classes → `needs_confirmation`, surfaced
   in the chat (the permission bar) and answered via
   `ControlConsole.RespondToConfirmation`. "Cancel my flight" = destructive/money
-  → must confirm.
+  → must confirm. Approval grants are scoped to the action class/op/target
+  material, single-use, short-lived, and bounded.
 - **`Eval` + raw input are high-risk by default.** `Eval` is arbitrary code — it
   can read hidden DOM, inspect/submit forms, mutate state, and **bypass snapshot
   redaction** → gate + heavily audit (or require an explicit capability).
   `MouseClick`/`Key` bypass *semantic* classification (a pixel click carries no
   "payment button" meaning) → treat as elevated / require a justifying ref.
-- **Redaction** — password/payment fields stripped from snapshots; the model
-  never sees cookie values or account metadata (only coarse `likely_authenticated`).
+- **Redaction** — password/OTP/payment values are stripped at snapshot-build
+  time using AX field type plus non-secret DOM metadata (`name`/`id`/class like
+  `cc-number`, `cvv`, `expiry`) and Chromium form hints (`autocomplete`,
+  `input_type`, placeholder/description/tooltip); the model never sees cookie
+  values or account metadata (only coarse `likely_authenticated`).
+- **Broker input/output caps** — bounded snapshot strings, `Eval`
+  scripts/results, semantic fill values, dialog prompt text, file chooser
+  paths/counts, screenshot dimensions, drag steps, and scroll deltas. The
+  control layer is performance-first; no unbounded payload gets to a browser
+  primitive.
 - **Post-fill taint** — after a credential fill the frame is secret-tainted;
-  reads (snapshot/screenshot/`Eval`/probe/raw input) on it are restricted until the
-  taint clears (§15). Stops the agent reading back a just-filled password/OTP.
+  reads (snapshot/screenshot/`Eval`/probe) on it are restricted until the taint
+  clears (§15). Raw input (mouse/key/wheel) is treated more conservatively: if
+  any active frame in the tab is tainted, tab-wide raw input is blocked. Stops
+  the agent reading back or manipulating a just-filled password/OTP.
 - **Mode-dependent strictness** — borrowed-tab (your real session, §14) stricter
   than an isolated agent tab.
 - **Audit log** — every action (class, target, result, `action_id`) + the events
   it caused (via `originating_action_id`), replayable.
-- **Cancel/interrupt + visible lock** while driving.
+- **Cancel/interrupt + visible lock** while driving. Cancellation must also cut
+  off late async completions (cold snapshots, probes, screenshots, `Eval`) so a
+  cancelled tab cannot resume the agent loop with stale perception or results.
 
 Building the broker **before** the primitives is deliberate — retrofitting policy
 around raw browser-control later is painful and leaky.
@@ -465,8 +556,8 @@ Three structural guarantees keep the plaintext out of the model — defense in d
    V8 isolate or the model context.
 2. **The interface has no secret field.** `FillCredential` returns an
    `ActionResult` — there is *structurally no channel* to return a password.
-3. **Snapshots redact field values** (§12) — even reading a filled password field
-   yields `••••`, not the value.
+3. **Snapshots redact field values** (§12) — even reading a filled password,
+   OTP, or payment field reports no value.
 
 The flow, entirely through the broker as the **`credential`** class:
 
@@ -478,6 +569,13 @@ agent → FillCredential(handle, {username_ref, password_ref})
          → read secret IN browser process → native autofill into the two field refs
          → ActionResult{ok}  (no secret) → audit{cred used, origin, action_id}
 ```
+
+Implementation status: the native control layer already exposes these brokered
+credential methods and routes them through the credential-class gate/audit path,
+but the Vault backend is intentionally fail-closed until the §18 spike verifies
+the password-manager/TOTP/passkey pieces in the Helium patch set. Third-party
+manager skills can still call `MarkCredentialInjection(frame)` to trigger the
+same post-fill taint path.
 
 - **Enumerate, don't reveal:** `ListCredentials` is **origin-scoped + intent-gated**
   and returns **opaque handles + coarse labels** (a user-set nickname, or "Account 1")
@@ -496,10 +594,18 @@ agent → FillCredential(handle, {username_ref, password_ref})
 
 Never-reveal covers *injection*, not *afterward*: once filled, the secret sits in
 the field (a **TOTP especially** may land in plain visible text). So `FillCredential`
-/ `FillTotp` **taints the target frame**, and while tainted the broker tightens
-every *read*: snapshots redact the tainted fields, `Screenshot` is blocked, and
-`Eval` / `ProbeNode` / raw `Key`·`MouseClick` on that frame are gated or denied.
-The taint clears on navigation away, or once the field is submitted and cleared.
+/ `FillTotp`, third-party `MarkCredentialInjection`, and any brokered semantic
+`Fill` into a credential/payment-looking field **taint the target frame**. While
+tainted the broker tightens every *read*: snapshots redact the tainted fields,
+`Screenshot` is blocked, and `Eval` / `ProbeNode` on that frame are gated or
+denied. Full-tab screenshots and raw `Key`·`MouseClick`/drag/wheel are blocked
+tab-wide if any active frame is tainted, because raw input cannot safely prove
+which frame will consume it.
+Late async read completions are checked again and dropped if the frame becomes
+tainted after dispatch but before the result returns.
+Taint is retained on inactive BFCache documents, ignored while inactive, and
+re-applied if restored; it clears only when the tainted RFH is actually deleted
+or once an explicit post-submit cleanup proves the secret field is gone.
 **This is what actually keeps the secret from the agent after the fill** — in both
 the Vault and third-party paths.
 
@@ -530,8 +636,8 @@ agent** (native autofill, or the extension). What keeps it never-reveal *after*
 injection is the post-fill taint above — the secret is now in the page either way. **One asymmetry:** native `FillCredential` taints
 automatically, but the broker can't *see* an extension inject — so a credential
 skill must **declare itself** (skill metadata `credential: true`) or call
-`MarkCredentialInjection(frame)` around its fill step, and the broker taints
-conservatively.
+`MarkCredentialInjection(frame)` around its fill step with the current
+`FrameRef` (main frame or iframe), and the broker taints conservatively.
 Bonus: the manager's own lock fires
 normally (1Password's Touch ID prompt), so its security is preserved and the agent
 can't bypass it. (On macOS, AuthenticationServices can also surface a registered
@@ -571,11 +677,31 @@ the **leanest** mode that yields a usable tree, not the full screen-reader set.
 
 **Fixture suite (makes correctness measurable, not vibes):** React/Vue *controlled*
 inputs, **shadow DOM**, **iframe/OOPIF**, **occlusion**, custom dropdowns/comboboxes,
-infinite scroll, **dialogs**, **popups**, **downloads**, and a **clickability**
+infinite scroll, **dialogs**, **permission prompts**, **auth redirects**,
+**file choosers**, **popups**, **downloads**, and a **clickability**
 page (`addEventListener`, delegated listeners, React synthetic events, shadow-DOM
 hosts, disabled-ish custom buttons, default-cursor `<button>`s) — this one exists
 specifically to **prove or disprove `IsClickable()`** before §6 relies on it. The
-substrate must pass these before the brain is worth tuning.
+substrate must pass these before the brain is worth tuning. Include explicit
+regressions for OOPIF/frame-local AX ids (`AXTreeCombiner` ids must never be
+action refs), ignored-container collapse, and scroll-triggered event causality
+(`Scroll` → lazy navigation/download/dialog retains `originating_action_id`).
+Include a cold-subscribe event fixture: call `Observe()` without `ListTabs()`,
+then trigger navigation/dialog/download in an existing tab and verify the event
+arrives with a nonempty frame token once AX is available.
+Also test multi-event causal bursts: one action that causes
+navigation-plus-download, navigation-plus-dialog, or popup-plus-navigation must
+keep the same `originating_action_id` across every caused event, not just the
+first committed navigation. Add a duplicate-URL download fixture too: when two
+tabs share the same URL, download attribution must use the unique pending-action
+tab or report no tab rather than guessing.
+Also include a taint-race fixture: start `GetSnapshot`/`ProbeNode`/`Screenshot`
+/ `Eval`, taint the frame before the callback, and verify no secret-bearing
+result is released. Add a taint-lifecycle fixture covering BFCache restore and
+same-RFH document replacement: taint must be retained while the RFH survives,
+ignored while inactive, and cleared only on RFH deletion or explicit cleanup.
+For iframe/OOPIF dialogs and file choosers, assert `EventMeta.frame_token`
+matches the source frame, not the tab's current main frame.
 
 ---
 
