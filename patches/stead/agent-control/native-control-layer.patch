@@ -229,7 +229,7 @@ new file mode 100644
 index 0000000000000..f9f3cf0ea8747
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/BUILD.gn
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,60 @@
 +# Copyright 2026 The Stead Authors
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
@@ -258,6 +258,7 @@ index 0000000000000..f9f3cf0ea8747
 +  deps = [
 +    ":mojo_bindings",
 +    "//base",
++    "//chrome/browser/password_manager",
 +    "//chrome/browser/profiles:profile",
 +    "//chrome/browser/ui/browser_window",
 +    "//chrome/browser/ui/tabs:tab_strip",
@@ -266,6 +267,8 @@ index 0000000000000..f9f3cf0ea8747
 +    "//components/javascript_dialogs",
 +    "//components/permissions",
 +    "//components/keyed_service/core",
++    "//components/password_manager/core/browser",
++    "//components/password_manager/core/browser/password_store:password_store_interface",
 +    "//components/sessions",
 +    "//components/sessions:session_id",
 +    "//components/tab_groups",
@@ -292,7 +295,7 @@ new file mode 100644
 index 0000000000000..4cbb02c943bdb
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/agent_control.mojom
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,346 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -541,6 +544,16 @@ index 0000000000000..4cbb02c943bdb
 +  kEval,
 +};
 +
++enum CredentialUsePolicy {
++  // Normal/read/full modes: saved-password use is pre-authorized through the
++  // broker. Locked Vault/passkey ceremonies still require native user presence.
++  kPreauthorized,
++
++  // Ask-first mode: every credential enumeration/fill attempt must surface a
++  // ControlConsole confirmation before the broker proceeds.
++  kAskForApproval,
++};
++
 +struct AuditEntry {
 +  int32 action_id;
 +  uint64 sequence;
@@ -610,11 +623,13 @@ index 0000000000000..4cbb02c943bdb
 +      int32 button, int32 steps) => (ActionResult result);
 +  Key(int32 tab_id, string key, int32 modifiers) => (ActionResult result);
 +  Scroll(int32 tab_id, int32 dx, int32 dy) => (ActionResult result);
-+  ListCredentials(int32 tab_id, url.mojom.Origin origin)
++  ListCredentials(int32 tab_id, url.mojom.Origin origin,
++      CredentialUsePolicy policy)
 +      => (ReadResult result, array<CredentialRef> credentials);
 +  FillCredential(CredentialRef credential, NodeRef username_field,
-+      NodeRef password_field) => (ActionResult result);
-+  FillTotp(CredentialRef credential, NodeRef field)
++      NodeRef password_field, CredentialUsePolicy policy)
++      => (ActionResult result);
++  FillTotp(CredentialRef credential, NodeRef field, CredentialUsePolicy policy)
 +      => (ActionResult result);
 +  MarkCredentialInjection(FrameRef frame) => (ActionResult result);
 +};
@@ -772,7 +787,7 @@ new file mode 100644
 index 0000000000000..7a3e021c74dab
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
-@@ -0,0 +1,5961 @@
+@@ -0,0 +1,6279 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -790,6 +805,7 @@ index 0000000000000..7a3e021c74dab
 +#include <string>
 +#include <string_view>
 +#include <utility>
++#include <variant>
 +#include <vector>
 +
 +#include "base/containers/flat_set.h"
@@ -806,8 +822,10 @@ index 0000000000000..7a3e021c74dab
 +#include "base/task/bind_post_task.h"
 +#include "base/task/sequenced_task_runner.h"
 +#include "base/time/time.h"
++#include "base/unguessable_token.h"
 +#include "base/values.h"
 +#include "chrome/browser/file_select_helper.h"
++#include "chrome/browser/password_manager/chrome_password_manager_client.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
@@ -820,6 +838,11 @@ index 0000000000000..7a3e021c74dab
 +#include "components/permissions/permission_request_manager.h"
 +#include "components/permissions/permission_uma_constants.h"
 +#include "components/permissions/request_type.h"
++#include "components/password_manager/core/browser/password_form.h"
++#include "components/password_manager/core/browser/password_form_digest.h"
++#include "components/password_manager/core/browser/password_store/password_store_consumer.h"
++#include "components/password_manager/core/browser/password_store/password_store_interface.h"
++#include "components/password_manager/core/browser/password_store/stored_credential.h"
 +#include "components/sessions/content/session_tab_helper.h"
 +#include "components/sessions/core/session_id.h"
 +#include "components/tab_groups/tab_group_color.h"
@@ -933,6 +956,9 @@ index 0000000000000..7a3e021c74dab
 +constexpr char kRawWheelEventAccepted[] = "raw_wheel_event_accepted";
 +constexpr char kCredentialBackendUnavailable[] =
 +    "credential_backend_unavailable";
++constexpr char kCredentialMissing[] = "credential_missing";
++constexpr char kCredentialsListed[] = "credentials_listed";
++constexpr char kCredentialFilled[] = "credential_filled";
 +constexpr char kSecretTainted[] = "secret_tainted";
 +constexpr char kFrameTainted[] = "frame_tainted";
 +constexpr char kPopupOpened[] = "popup_opened";
@@ -952,11 +978,13 @@ index 0000000000000..7a3e021c74dab
 +constexpr base::TimeDelta kScreenshotCopyTimeout = base::Milliseconds(1000);
 +constexpr base::TimeDelta kPendingActionTimeout = base::Seconds(10);
 +constexpr base::TimeDelta kApprovalGrantTtl = base::Seconds(60);
++constexpr base::TimeDelta kCredentialCacheTtl = base::Minutes(5);
 +constexpr int kMaxScreenshotDimension = 1600;
 +constexpr int kMaxScrollDelta = 10000;
 +constexpr size_t kMaxEvalScriptBytes = 64 * 1024;
 +constexpr size_t kMaxEvalResultBytes = 256 * 1024;
 +constexpr size_t kMaxFillValueBytes = 64 * 1024;
++constexpr size_t kMaxCachedCredentials = 128;
 +constexpr size_t kMaxDialogPromptBytes = 4096;
 +constexpr size_t kMaxFileChooserFiles = 64;
 +constexpr size_t kMaxFileChooserPathBytes = 4096;
@@ -1158,6 +1186,11 @@ index 0000000000000..7a3e021c74dab
 +      primary_ref.frame ? primary_ref.frame->tab_id : 0;
 +  return std::string(operation) + "|" + std::to_string(tab_id) + "|" +
 +         digest_hex;
++}
++
++bool CredentialPolicyRequiresConfirmation(
++    mojom::CredentialUsePolicy policy) {
++  return policy == mojom::CredentialUsePolicy::kAskForApproval;
 +}
 +
 +bool SameProfile(Profile* lhs, Profile* rhs) {
@@ -2241,6 +2274,12 @@ index 0000000000000..7a3e021c74dab
 +                             const KeyInfo& key_info,
 +                             int32_t modifiers);
 +  TabEventState GetTabEventState(int32_t tab_id);
++  ChromePasswordManagerClient* PasswordManagerClientForTab(int32_t tab_id) {
++    content::WebContents* web_contents = FindTabById(tab_id);
++    return web_contents
++               ? ChromePasswordManagerClient::FromWebContents(web_contents)
++               : nullptr;
++  }
 +  bool IsAgentOwnedTab(int32_t tab_id) const;
 +  mojom::ActionClass ClassifyAccessibilityAction(
 +      const mojom::NodeRef& ref,
@@ -2395,6 +2434,117 @@ index 0000000000000..7a3e021c74dab
 +  base::flat_map<int32_t, std::unique_ptr<SnapshotIndex>> snapshot_indexes_;
 +  base::flat_set<int32_t> agent_owned_tabs_;
 +  base::WeakPtrFactory<PrivateBrowserControl> weak_factory_{this};
++};
++
++class SteadAgentControlService::CredentialQuery
++    : public password_manager::PasswordStoreConsumer {
++ public:
++  CredentialQuery(base::WeakPtr<SteadAgentControlService> service,
++                  int32_t action_id,
++                  int32_t tab_id,
++                  const url::Origin& origin,
++                  ListCredentialsCallback callback)
++      : service_(service),
++        action_id_(action_id),
++        tab_id_(tab_id),
++        origin_(origin),
++        callback_(std::move(callback)) {}
++
++  CredentialQuery(const CredentialQuery&) = delete;
++  CredentialQuery& operator=(const CredentialQuery&) = delete;
++  ~CredentialQuery() override = default;
++
++  void Start(ChromePasswordManagerClient* client) {
++    if (!client || !origin_.GetURL().SchemeIsHTTPOrHTTPS()) {
++      Finish(/*backend_error=*/true,
++             "Password manager is unavailable for this origin.");
++      return;
++    }
++
++    profile_store_ = client->GetProfilePasswordStore();
++    account_store_ = client->GetAccountPasswordStore();
++    password_manager::PasswordFormDigest digest(
++        password_manager::PasswordForm::Scheme::kHtml, origin_.Serialize(),
++        origin_.GetURL());
++
++    if (profile_store_) {
++      ++pending_store_count_;
++      profile_store_->GetLogins(digest, weak_factory_.GetWeakPtr());
++    }
++    if (account_store_ && account_store_ != profile_store_) {
++      ++pending_store_count_;
++      account_store_->GetLogins(digest, weak_factory_.GetWeakPtr());
++    }
++
++    if (pending_store_count_ == 0) {
++      Finish(/*backend_error=*/true, "Password store was unavailable.");
++    }
++  }
++
++  void OnGetPasswordStoreResultsOrErrorFrom(
++      password_manager::PasswordStoreInterface* store,
++      password_manager::LoginsResultOrError results_or_error) override {
++    if (std::holds_alternative<password_manager::PasswordStoreBackendError>(
++            results_or_error)) {
++      saw_backend_error_ = true;
++    } else {
++      password_manager::LoginsResult results =
++          std::move(std::get<password_manager::LoginsResult>(
++              results_or_error));
++      for (password_manager::StoredCredential& credential : results) {
++        AddCredential(store, credential);
++      }
++    }
++
++    if (--pending_store_count_ == 0) {
++      Finish(saw_backend_error_ && credentials_.empty(),
++             "Password store query failed.");
++    }
++  }
++
++ private:
++  void AddCredential(password_manager::PasswordStoreInterface* /*store*/,
++                     const password_manager::StoredCredential& credential) {
++    if (credential.blocked_by_user || credential.password_value.empty()) {
++      return;
++    }
++    if (credential.scheme != password_manager::PasswordForm::Scheme::kHtml) {
++      return;
++    }
++    if (credential.signon_realm != origin_.Serialize()) {
++      return;
++    }
++
++    CachedCredential cached;
++    cached.origin = origin_.Serialize();
++    cached.source = "stead_vault";
++    cached.username_value = credential.username_value;
++    cached.password_value = credential.password_value;
++    credentials_.push_back(std::move(cached));
++  }
++
++  void Finish(bool backend_error, const std::string& error_message) {
++    if (!callback_) {
++      return;
++    }
++    if (service_) {
++      service_->CompleteCredentialQuery(
++          action_id_, tab_id_, std::move(callback_), std::move(credentials_),
++          backend_error, error_message);
++    }
++  }
++
++  base::WeakPtr<SteadAgentControlService> service_;
++  int32_t action_id_;
++  int32_t tab_id_;
++  url::Origin origin_;
++  ListCredentialsCallback callback_;
++  raw_ptr<password_manager::PasswordStoreInterface> profile_store_ = nullptr;
++  raw_ptr<password_manager::PasswordStoreInterface> account_store_ = nullptr;
++  int pending_store_count_ = 0;
++  bool saw_backend_error_ = false;
++  std::vector<CachedCredential> credentials_;
++  base::WeakPtrFactory<CredentialQuery> weak_factory_{this};
 +};
 +
 +class SteadAgentControlService::PermissionObserver
@@ -2839,6 +2989,9 @@ index 0000000000000..7a3e021c74dab
 +  approval_grants_.clear();
 +  audit_log_.clear();
 +  secret_tainted_frames_.clear();
++  credential_queries_.clear();
++  credential_cache_.clear();
++  credential_cache_order_.clear();
 +  cancel_epochs_by_tab_.clear();
 +  if (download_observer_) {
 +    download_observer_->Shutdown();
@@ -5429,9 +5582,94 @@ index 0000000000000..7a3e021c74dab
 +                    /*blocked_by=*/std::string(), current_generation));
 +}
 +
++void SteadAgentControlService::CompleteCredentialQuery(
++    int32_t action_id,
++    int32_t tab_id,
++    ListCredentialsCallback callback,
++    std::vector<CachedCredential> credentials,
++    bool backend_error,
++    const std::string& error_message) {
++  PurgeExpiredCredentialCache();
++
++  std::vector<mojom::CredentialRefPtr> refs;
++  mojom::ReadResultPtr result;
++  if (backend_error) {
++    result = MakeReadResult(false, kCredentialBackendUnavailable,
++                            error_message.empty()
++                                ? "Chromium password manager query failed."
++                                : error_message,
++                            "vault");
++  } else {
++    int label_index = 1;
++    for (CachedCredential& credential : credentials) {
++      const std::string source = credential.source.empty()
++                                     ? "stead_vault"
++                                     : credential.source;
++      const std::string handle = CacheCredential(std::move(credential));
++      refs.push_back(mojom::CredentialRef::New(
++          handle, "Account " + std::to_string(label_index++), source,
++          /*has_totp=*/false, /*has_passkey=*/false));
++    }
++    result = MakeReadResult(true, kCredentialsListed,
++                            refs.empty() ? "No saved credentials found."
++                                         : "Saved credentials listed.",
++                            std::string());
++  }
++
++  mojom::ActionResultPtr audit_result = MakeResult(
++      action_id, result->ok, result->code, result->message,
++      /*stale=*/false, /*needs_snapshot=*/false,
++      /*needs_confirmation=*/false, /*target_missing=*/false,
++      result->blocked_by);
++  RecordAudit(*audit_result, tab_id, mojom::ActionClass::kCredential,
++              "ListCredentials");
++  credential_queries_.erase(action_id);
++  std::move(callback).Run(std::move(result), std::move(refs));
++}
++
++std::string SteadAgentControlService::CacheCredential(
++    CachedCredential credential) {
++  PurgeExpiredCredentialCache();
++  credential.created_at = base::TimeTicks::Now();
++  const std::string handle = base::UnguessableToken::Create().ToString();
++  credential_cache_[handle] = std::move(credential);
++  credential_cache_order_.push_back(handle);
++  while (credential_cache_.size() > kMaxCachedCredentials &&
++         !credential_cache_order_.empty()) {
++    credential_cache_.erase(credential_cache_order_.front());
++    credential_cache_order_.pop_front();
++  }
++  return handle;
++}
++
++const SteadAgentControlService::CachedCredential*
++SteadAgentControlService::FindCachedCredential(const std::string& handle) {
++  PurgeExpiredCredentialCache();
++  auto it = credential_cache_.find(handle);
++  return it == credential_cache_.end() ? nullptr : &it->second;
++}
++
++void SteadAgentControlService::PurgeExpiredCredentialCache() {
++  const base::TimeTicks now = base::TimeTicks::Now();
++  while (!credential_cache_order_.empty()) {
++    const std::string& handle = credential_cache_order_.front();
++    auto it = credential_cache_.find(handle);
++    if (it == credential_cache_.end()) {
++      credential_cache_order_.pop_front();
++      continue;
++    }
++    if (now - it->second.created_at <= kCredentialCacheTtl) {
++      break;
++    }
++    credential_cache_.erase(it);
++    credential_cache_order_.pop_front();
++  }
++}
++
 +void SteadAgentControlService::ListCredentials(
 +    int32_t tab_id,
 +    const url::Origin& origin,
++    mojom::CredentialUsePolicy policy,
 +    ListCredentialsCallback callback) {
 +  const int32_t action_id = NextActionId();
 +  const mojom::ActionClass action_class = mojom::ActionClass::kCredential;
@@ -5446,10 +5684,19 @@ index 0000000000000..7a3e021c74dab
 +    result = MakeReadResult(false, kInvalidUrl,
 +                            "Credential origin must be tuple-origin scoped.",
 +                            "origin");
++  } else if (!origin.GetURL().SchemeIsHTTPOrHTTPS()) {
++    result = MakeReadResult(false, kInvalidUrl,
++                            "Credential origin must be http(s).", "origin");
++  } else if (url::Origin::Create(GURL(event_state.url)).Serialize() !=
++             origin.Serialize()) {
++    result = MakeReadResult(false, kInvalidUrl,
++                            "Credential origin must match the target tab.",
++                            "origin");
 +  } else {
 +    mojom::ActionResultPtr gate = MaybeGateAction(
 +        action_id, tab_id, action_class, operation,
-+        CredentialListApprovalScope(tab_id, origin));
++        CredentialListApprovalScope(tab_id, origin),
++        CredentialPolicyRequiresConfirmation(policy));
 +    if (gate) {
 +      result = MakeReadResult(false, gate->code, gate->message,
 +                              gate->blocked_by);
@@ -5457,9 +5704,22 @@ index 0000000000000..7a3e021c74dab
 +      std::move(callback).Run(std::move(result), std::move(credentials));
 +      return;
 +    }
-+    result = MakeReadResult(
-+        false, kCredentialBackendUnavailable,
-+        "Native credential backend is not wired yet.", "vault");
++    ChromePasswordManagerClient* client =
++        browser_control_->PasswordManagerClientForTab(tab_id);
++    if (!client || (!client->GetProfilePasswordStore() &&
++                    !client->GetAccountPasswordStore())) {
++      result = MakeReadResult(false, kCredentialBackendUnavailable,
++                              "Chromium password manager was unavailable.",
++                              "vault");
++    } else {
++      auto query = std::make_unique<CredentialQuery>(
++          weak_factory_.GetWeakPtr(), action_id, tab_id, origin,
++          std::move(callback));
++      CredentialQuery* raw_query = query.get();
++      credential_queries_[action_id] = std::move(query);
++      raw_query->Start(client);
++      return;
++    }
 +  }
 +
 +  mojom::ActionResultPtr audit_result = MakeResult(
@@ -5475,6 +5735,7 @@ index 0000000000000..7a3e021c74dab
 +    mojom::CredentialRefPtr credential,
 +    mojom::NodeRefPtr username_field,
 +    mojom::NodeRefPtr password_field,
++    mojom::CredentialUsePolicy policy,
 +    FillCredentialCallback callback) {
 +  const int32_t action_id = NextActionId();
 +  const int32_t tab_id =
@@ -5509,9 +5770,11 @@ index 0000000000000..7a3e021c74dab
 +    return;
 +  }
 +
-+  if (username_field->frame->tab_id != password_field->frame->tab_id) {
++  if (username_field->frame->tab_id != password_field->frame->tab_id ||
++      username_field->frame->frame_token !=
++          password_field->frame->frame_token) {
 +    finish(MakeResult(action_id, false, kInvalidRef,
-+                      "Credential target refs must belong to the same tab.",
++                      "Credential target refs must belong to the same frame.",
 +                      /*stale=*/false, /*needs_snapshot=*/false,
 +                      /*needs_confirmation=*/false,
 +                      /*target_missing=*/true, "target"));
@@ -5521,22 +5784,86 @@ index 0000000000000..7a3e021c74dab
 +  mojom::ActionResultPtr gate = MaybeGateAction(
 +      action_id, tab_id, action_class, operation,
 +      CredentialFillApprovalScope(operation, credential->handle,
-+                                  *username_field, password_field.get()));
++                                  *username_field, password_field.get()),
++      CredentialPolicyRequiresConfirmation(policy));
 +  if (gate) {
 +    finish(std::move(gate));
 +    return;
 +  }
 +
-+  finish(MakeResult(action_id, false, kCredentialBackendUnavailable,
-+                    "Native credential backend is not wired yet.",
-+                    /*stale=*/false, /*needs_snapshot=*/false,
++  const CachedCredential* cached = FindCachedCredential(credential->handle);
++  if (!cached) {
++    finish(MakeResult(action_id, false, kCredentialMissing,
++                      "Credential handle was missing or expired.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false,
++                      /*target_missing=*/false, "credential"));
++    return;
++  }
++
++  const TabEventState event_state = browser_control_->GetTabEventState(tab_id);
++  const url::Origin current_origin = url::Origin::Create(GURL(event_state.url));
++  if (current_origin.opaque() || current_origin.Serialize() != cached->origin) {
++    finish(MakeResult(action_id, false, kInvalidRef,
++                      "Credential origin did not match the target tab.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false,
++                      /*target_missing=*/false, "origin"));
++    return;
++  }
++
++  const std::string username = base::UTF16ToUTF8(cached->username_value);
++  const std::string password = base::UTF16ToUTF8(cached->password_value);
++  credential_cache_.erase(credential->handle);
++  if (username.size() > kMaxFillValueBytes ||
++      password.size() > kMaxFillValueBytes) {
++    finish(MakeResult(action_id, false, kFillValueTooLarge,
++                      "Credential value exceeded the broker input cap.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false,
++                      /*target_missing=*/false, "credential"));
++    return;
++  }
++
++  if (!username.empty()) {
++    mojom::ActionResultPtr username_result =
++        browser_control_->DispatchAccessibilityAction(
++            *username_field, action_id, ax::mojom::Action::kSetValue,
++            username);
++    if (!username_result->ok) {
++      finish(std::move(username_result));
++      return;
++    }
++  }
++
++  mojom::ActionResultPtr password_result =
++      browser_control_->DispatchAccessibilityAction(
++          *password_field, action_id, ax::mojom::Action::kSetValue,
++          password);
++  if (!password_result->ok) {
++    finish(std::move(password_result));
++    return;
++  }
++
++  MarkFrameTainted(*password_field->frame);
++  pending_action_by_tab_[tab_id] = action_id;
++  SchedulePendingActionClear(tab_id, action_id);
++  EmitEvent(mojom::ControlEventType::kActionDispatched, tab_id,
++            password_field->frame->frame_token, action_id, event_state.url,
++            event_state.title, kCredentialFilled, operation);
++
++  finish(MakeResult(action_id, true, kCredentialFilled,
++                    "Credential filled through Stead Vault.",
++                    /*stale=*/false, /*needs_snapshot=*/true,
 +                    /*needs_confirmation=*/false,
-+                    /*target_missing=*/false, "vault"));
++                    /*target_missing=*/false, std::string(),
++                    browser_control_->CurrentSnapshotGeneration(tab_id)));
 +}
 +
 +void SteadAgentControlService::FillTotp(
 +    mojom::CredentialRefPtr credential,
 +    mojom::NodeRefPtr field,
++    mojom::CredentialUsePolicy policy,
 +    FillTotpCallback callback) {
 +  const int32_t action_id = NextActionId();
 +  const int32_t tab_id = field && field->frame ? field->frame->tab_id : 0;
@@ -5568,14 +5895,15 @@ index 0000000000000..7a3e021c74dab
 +  mojom::ActionResultPtr gate = MaybeGateAction(
 +      action_id, tab_id, action_class, operation,
 +      CredentialFillApprovalScope(operation, credential->handle, *field,
-+                                  /*secondary_ref=*/nullptr));
++                                  /*secondary_ref=*/nullptr),
++      CredentialPolicyRequiresConfirmation(policy));
 +  if (gate) {
 +    finish(std::move(gate));
 +    return;
 +  }
 +
 +  finish(MakeResult(action_id, false, kCredentialBackendUnavailable,
-+                    "Native credential backend is not wired yet.",
++                    "Native TOTP backend is not wired yet.",
 +                    /*stale=*/false, /*needs_snapshot=*/false,
 +                    /*needs_confirmation=*/false,
 +                    /*target_missing=*/false, "vault"));
@@ -6576,11 +6904,12 @@ index 0000000000000..7a3e021c74dab
 +    int32_t tab_id,
 +    mojom::ActionClass action_class,
 +    const std::string& operation,
-+    const std::string& approval_scope) {
++    const std::string& approval_scope,
++    bool force_confirmation) {
 +  const bool requires_confirmation =
++      force_confirmation ||
 +      action_class == mojom::ActionClass::kDestructive ||
 +      action_class == mojom::ActionClass::kPayment ||
-+      action_class == mojom::ActionClass::kCredential ||
 +      action_class == mojom::ActionClass::kFileAccess ||
 +      action_class == mojom::ActionClass::kRawInput ||
 +      action_class == mojom::ActionClass::kEval;
@@ -6593,12 +6922,16 @@ index 0000000000000..7a3e021c74dab
 +    return nullptr;
 +  }
 +
++  const std::string reason =
++      action_class == mojom::ActionClass::kCredential
++          ? "Saved-password use requires confirmation in ask-first mode."
++          : "High-risk action requires confirmation.";
 +  auto stored_request = mojom::ConfirmationRequest::New(
 +      action_id, tab_id, action_class, operation,
-+      "High-risk action requires confirmation.");
++      reason);
 +  auto outbound_request = mojom::ConfirmationRequest::New(
 +      action_id, tab_id, action_class, operation,
-+      "High-risk action requires confirmation.");
++      reason);
 +  pending_confirmations_[action_id] = std::move(stored_request);
 +  pending_confirmation_scopes_[action_id] = approval_scope;
 +  NotifyConfirmation(std::move(outbound_request));
@@ -6739,7 +7072,7 @@ new file mode 100644
 index 0000000000000..c1c7d850f8a48
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,393 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -6806,9 +7139,9 @@ index 0000000000000..c1c7d850f8a48
 +// Browser-resident broker implementation for Stead's control layer.
 +//
 +// This service intentionally exposes only brokered, observable browser actions.
-+// Native Vault-backed credential fills fail closed until the Vault subsystem
-+// lands; third-party credential injection can still taint via
-+// MarkCredentialInjection.
++// Native Vault-backed credential fills use Chromium's password manager through
++// brokered, never-reveal handles; third-party credential injection can still
++// taint via MarkCredentialInjection.
 +class SteadAgentControlService : public KeyedService,
 +                                public mojom::AgentControl,
 +                                public mojom::ControlConsole {
@@ -6893,13 +7226,16 @@ index 0000000000000..c1c7d850f8a48
 +              ScrollCallback callback) override;
 +  void ListCredentials(int32_t tab_id,
 +                       const url::Origin& origin,
++                       mojom::CredentialUsePolicy policy,
 +                       ListCredentialsCallback callback) override;
 +  void FillCredential(mojom::CredentialRefPtr credential,
 +                      mojom::NodeRefPtr username_field,
 +                      mojom::NodeRefPtr password_field,
++                      mojom::CredentialUsePolicy policy,
 +                      FillCredentialCallback callback) override;
 +  void FillTotp(mojom::CredentialRefPtr credential,
 +                mojom::NodeRefPtr field,
++                mojom::CredentialUsePolicy policy,
 +                FillTotpCallback callback) override;
 +  void MarkCredentialInjection(mojom::FrameRefPtr frame,
 +                               MarkCredentialInjectionCallback callback)
@@ -6919,6 +7255,7 @@ index 0000000000000..c1c7d850f8a48
 +  class FileChooserObserver;
 +  class PermissionObserver;
 +  class DownloadObserver;
++  class CredentialQuery;
 +  struct ActiveDialogState {
 +    int32_t tab_id = 0;
 +    std::string type;
@@ -6934,6 +7271,13 @@ index 0000000000000..c1c7d850f8a48
 +  struct FrameSnapshotSource;
 +  struct SnapshotBuildState;
 +  struct SnapshotIndex;
++  struct CachedCredential {
++    std::string origin;
++    std::string source;
++    std::u16string username_value;
++    std::u16string password_value;
++    base::TimeTicks created_at;
++  };
 +
 +  void PopulateNextAuthHintProbe(std::unique_ptr<ListTabsAuthState> state);
 +  void CompleteAuthHintProbe(
@@ -6971,7 +7315,8 @@ index 0000000000000..c1c7d850f8a48
 +                                         int32_t tab_id,
 +                                         mojom::ActionClass action_class,
 +                                         const std::string& operation,
-+                                         const std::string& approval_scope);
++                                         const std::string& approval_scope,
++                                         bool force_confirmation = false);
 +  void RecordAudit(const mojom::ActionResult& result,
 +                   int32_t tab_id,
 +                   mojom::ActionClass action_class,
@@ -7026,6 +7371,16 @@ index 0000000000000..c1c7d850f8a48
 +  void MarkFrameTainted(const mojom::FrameRef& frame);
 +  void ClearTaintForFrame(int32_t tab_id, const std::string& frame_token);
 +  void ClearTaintForTab(int32_t tab_id);
++  void CompleteCredentialQuery(
++      int32_t action_id,
++      int32_t tab_id,
++      ListCredentialsCallback callback,
++      std::vector<CachedCredential> credentials,
++      bool backend_error,
++      const std::string& error_message);
++  std::string CacheCredential(CachedCredential credential);
++  const CachedCredential* FindCachedCredential(const std::string& handle);
++  void PurgeExpiredCredentialCache();
 +  void EmitEvent(mojom::ControlEventType type,
 +                 int32_t tab_id,
 +                 const std::string& frame_token,
@@ -7082,6 +7437,10 @@ index 0000000000000..c1c7d850f8a48
 +  base::flat_map<FileSelectHelper*, std::string> active_file_chooser_by_helper_;
 +  base::flat_map<int32_t, std::string> active_file_chooser_by_tab_;
 +  base::flat_set<std::string> secret_tainted_frames_;
++  base::flat_map<int32_t, std::unique_ptr<CredentialQuery>>
++      credential_queries_;
++  base::flat_map<std::string, CachedCredential> credential_cache_;
++  std::deque<std::string> credential_cache_order_;
 +  base::flat_map<int32_t, uint64_t> cancel_epochs_by_tab_;
 +  struct ApprovalGrant {
 +    int32_t tab_id;
