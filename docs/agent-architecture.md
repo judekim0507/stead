@@ -354,7 +354,7 @@ metadata but never local paths, and selection/cancel flows only through
 `AgentControl.HandleFileChooser`.
 
 struct CredentialRef { string handle; string label; string source; bool has_totp; bool has_passkey; };
-                       // handle = opaque; label = coarse/user-set; NO username until approved (§15)
+                       // handle = opaque; label may include username/email; NO password/TOTP/passkey material (§15)
 
 // brain-facing: gated page-driving. EVERY mutating call is action-shaped
 // (returns ActionResult = action_id + gate/audit). Mirrors the primitives, BROKERED.
@@ -385,7 +385,7 @@ interface AgentControl {
   ListTabs() => (array<TabInfo> tabs);                       // COARSE auth hint only (§14)
   Eval(FrameRef frame, string js) => (ActionResult r, string? json_result);  // HIGH-RISK: gated+audited (§12); null if denied/tainted (§15)
   // credentials — never-reveal; origin-scoped + intent-gated (§15)
-  ListCredentials(int32 tab_id, url.mojom.Origin origin, CredentialUsePolicy policy) => (ReadResult r, array<CredentialRef> creds);  // opaque handles, NO secrets/usernames
+  ListCredentials(int32 tab_id, url.mojom.Origin origin, CredentialUsePolicy policy) => (ReadResult r, array<CredentialRef> creds);  // opaque handles + account labels, NO secrets
   FillCredential(CredentialRef cred, NodeRef username_field, NodeRef password_field, CredentialUsePolicy policy) => (ActionResult r);  // credential-class; TAINTS frame
   FillTotp(CredentialRef cred, NodeRef field, CredentialUsePolicy policy) => (ActionResult r);            // credential-class; TAINTS frame
   MarkCredentialInjection(FrameRef frame) => (ActionResult r);               // skill-driven 3rd-party fill: taint trigger (§15)
@@ -650,7 +650,7 @@ The flow, entirely through the broker as the **`credential`** class:
 
 ```
 agent → ListCredentials(origin)
-   broker → Vault → [{handle, label:"Account 1", source:"stead_vault", has_totp, has_passkey}]  // opaque; NO username/secret
+   broker → Vault → [{handle, label:"jude@example.com", source:"stead_vault", has_totp, has_passkey}]  // opaque; NO password/TOTP/passkey secret
 agent → FillCredential(handle, {username_ref, password_ref})
    broker: class=credential → confirm only in ask-for-approval mode → ensure Vault unlocked
          → read secret IN browser process → native autofill into the two field refs
@@ -660,8 +660,9 @@ agent → FillCredential(handle, {username_ref, password_ref})
 Implementation status: the native control layer now wires `ListCredentials` and
 `FillCredential` to Chromium's existing password manager (`PasswordStore` via the
 tab's `ChromePasswordManagerClient`). Returned handles are random, short-lived,
-browser-process-only cache keys; the model receives no username/password. `FillTotp`
-and passkey-specific behavior remain deferred until the §18 spike verifies the
+browser-process-only cache keys; the model may receive the saved username/email as
+the account-selector label, but never the password. `FillTotp` and agent-chosen
+passkey-specific behavior remain deferred until the §18 spike verifies the
 TOTP/passkey pieces in the Helium patch set. Third-party manager skills can still
 call `MarkCredentialInjection(frame)` to trigger the same post-fill taint path.
 `BrainConsole.SendMessage` carries the current UI permission mode into the brain
@@ -671,15 +672,18 @@ CredentialUsePolicy::Preauthorized` before any credential tool reaches
 `AgentControl`.
 
 - **Enumerate, don't reveal:** `ListCredentials` is **origin-scoped + policy-gated**
-  and returns **opaque handles + coarse labels** (a user-set nickname, or "Account 1")
-  + capability flags — **not the username** by default (usernames are account
-  metadata; revealed only when the current permission mode allows credential use).
-  Enough for the agent to *choose* ("my work account" → that handle), never the
-  password/TOTP/passkey secret.
+  and returns **opaque handles + account-selector labels**. Username/email is
+  allowed as selector metadata so the agent can choose the right saved account
+  without pulling the human into the loop unnecessarily. Passwords, TOTP codes,
+  cookies, payment secrets, and passkey private material are never exposed.
 - **TOTP & passkeys:** target behavior is `FillTotp(cred_id, ref)` generating
-  and filling the current code natively, with passkey logins running the native
-  WebAuthn ceremony (Touch ID / user-presence is a built-in gate). The agent
-  never sees a code or key. This remains behind the §18 TOTP/passkey spike.
+  and filling the current code natively. Human-clicked passkey flows stay native
+  Chromium/WebAuthn behavior. Agent-triggered passkey use is a distinct brokered
+  selection flow: list opaque handles with username/email labels and `has_passkey`,
+  let the agent choose the account, then run the native WebAuthn/CredMan ceremony
+  for that selected handle. Touch ID/user-presence and platform policy remain
+  native gates. The agent never sees a code, private key, or authenticator secret.
+  This remains behind the §18 TOTP/passkey spike.
 - **Sign-up / generation:** the agent can request a generated password — the Vault
   generates, fills the password + confirm fields, and offers to save the new
   entry. The agent orchestrates "generate → fill → save"; the value stays native.
