@@ -78,7 +78,7 @@ new file mode 100644
 index 0000000000000..b0bf93ec80ec
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/brain_console.mojom
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,76 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -113,6 +113,12 @@ index 0000000000000..b0bf93ec80ec
 +  string model;
 +};
 +
++enum BrainPermissionMode {
++  kAsk,
++  kRead,
++  kFull,
++};
++
 +interface BrainObserver {
 +  OnBrainEvent(BrainEvent event);
 +};
@@ -132,7 +138,8 @@ index 0000000000000..b0bf93ec80ec
 +  ListSessions() => (BrainResult result);
 +  LoadSession(string session_id) => (BrainResult result);
 +  SendMessage(string session_id, string text, BrainTabContext? tab_context,
-+      BrainModelSelection? model) => (BrainResult result);
++      BrainModelSelection? model, BrainPermissionMode permission_mode)
++      => (BrainResult result);
 +  CancelTurn(string session_id) => (BrainResult result);
 +
 +  ListProviderAuth() => (BrainResult result);
@@ -274,7 +281,7 @@ new file mode 100644
 index 0000000000000..962a5a6a98f8
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.h
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,138 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -286,6 +293,7 @@ index 0000000000000..962a5a6a98f8
 +#include <set>
 +#include <string>
 +
++#include "base/containers/flat_map.h"
 +#include "base/files/file_path.h"
 +#include "base/files/scoped_file.h"
 +#include "base/memory/scoped_refptr.h"
@@ -329,6 +337,7 @@ index 0000000000000..962a5a6a98f8
 +                   const std::string& text,
 +                   mojom::BrainTabContextPtr tab_context,
 +                   mojom::BrainModelSelectionPtr model,
++                   mojom::BrainPermissionMode permission_mode,
 +                   SendMessageCallback callback) override;
 +  void CancelTurn(const std::string& session_id,
 +                  CancelTurnCallback callback) override;
@@ -388,6 +397,10 @@ index 0000000000000..962a5a6a98f8
 +                                 const std::string& tool_name);
 +  std::string UserPromptKey(const std::string& session_id,
 +                            const std::string& tool_call_id) const;
++  mojom::BrainPermissionMode PermissionModeForSession(
++      const std::string& session_id) const;
++  mojom::CredentialUsePolicy CredentialUsePolicyForSession(
++      const std::string& session_id) const;
 +
 +  raw_ptr<Profile> profile_;
 +  mojo::ReceiverSet<mojom::BrainConsole> receivers_;
@@ -398,6 +411,8 @@ index 0000000000000..962a5a6a98f8
 +  bool initialized_ = false;
 +  int64_t next_request_id_ = 1;
 +  std::set<std::string> pending_user_prompts_;
++  base::flat_map<std::string, mojom::BrainPermissionMode>
++      session_permission_modes_;
 +
 +  base::WeakPtrFactory<SteadBrainService> weak_factory_{this};
 +};
@@ -410,7 +425,7 @@ new file mode 100644
 index 0000000000000..71246ae8e56d
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
-@@ -0,0 +1,1332 @@
+@@ -0,0 +1,1373 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -728,6 +743,26 @@ index 0000000000000..71246ae8e56d
 +  return options;
 +}
 +
++const char* PermissionModeToProtocolString(
++    mojom::BrainPermissionMode permission_mode) {
++  switch (permission_mode) {
++    case mojom::BrainPermissionMode::kAsk:
++      return "ask";
++    case mojom::BrainPermissionMode::kRead:
++      return "read";
++    case mojom::BrainPermissionMode::kFull:
++      return "full";
++  }
++  return "read";
++}
++
++mojom::CredentialUsePolicy CredentialUsePolicyForPermissionMode(
++    mojom::BrainPermissionMode permission_mode) {
++  return permission_mode == mojom::BrainPermissionMode::kAsk
++             ? mojom::CredentialUsePolicy::kAskForApproval
++             : mojom::CredentialUsePolicy::kPreauthorized;
++}
++
 +}  // namespace
 +
 +SteadBrainService::SteadBrainService(Profile* profile) : profile_(profile) {}
@@ -744,6 +779,7 @@ index 0000000000000..71246ae8e56d
 +  receivers_.Clear();
 +  observers_.Clear();
 +  pending_user_prompts_.clear();
++  session_permission_modes_.clear();
 +  StopHelper();
 +  profile_ = nullptr;
 +}
@@ -800,11 +836,15 @@ index 0000000000000..71246ae8e56d
 +                                    const std::string& text,
 +                                    mojom::BrainTabContextPtr tab_context,
 +                                    mojom::BrainModelSelectionPtr model,
++                                    mojom::BrainPermissionMode permission_mode,
 +                                    SendMessageCallback callback) {
 +  const std::string request_id = NextRequestId();
 +  base::DictValue request = MakeRequest("send_message", request_id);
 +  request.Set("session_id", session_id);
 +  request.Set("text", text);
++  request.Set("permission_mode",
++              PermissionModeToProtocolString(permission_mode));
++  session_permission_modes_[session_id] = permission_mode;
 +  if (tab_context) {
 +    base::DictValue tab;
 +    tab.Set("tab_id", tab_context->tab_id);
@@ -1621,6 +1661,7 @@ index 0000000000000..71246ae8e56d
 +    }
 +    control->ListCredentials(
 +        *tab_id, url::Origin::Create(GURL(*origin)),
++        CredentialUsePolicyForSession(session_id),
 +        base::BindOnce(
 +            [](base::WeakPtr<SteadBrainService> service,
 +               std::string session_id, std::string tool_call_id,
@@ -1675,6 +1716,7 @@ index 0000000000000..71246ae8e56d
 +    }
 +    control->FillCredential(
 +        std::move(credential), std::move(username), std::move(password),
++        CredentialUsePolicyForSession(session_id),
 +        base::BindOnce(action_done, weak_factory_.GetWeakPtr(), session_id,
 +                       tool_call_id));
 +    return;
@@ -1693,6 +1735,7 @@ index 0000000000000..71246ae8e56d
 +      return;
 +    }
 +    control->FillTotp(std::move(credential), std::move(field),
++                      CredentialUsePolicyForSession(session_id),
 +                      base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
 +                                     session_id, tool_call_id));
 +    return;
@@ -1741,6 +1784,18 @@ index 0000000000000..71246ae8e56d
 +    const std::string& session_id,
 +    const std::string& tool_call_id) const {
 +  return base::StrCat({session_id, ":", tool_call_id});
++}
++
++mojom::BrainPermissionMode SteadBrainService::PermissionModeForSession(
++    const std::string& session_id) const {
++  auto it = session_permission_modes_.find(session_id);
++  return it == session_permission_modes_.end() ? mojom::BrainPermissionMode::kRead
++                                               : it->second;
++}
++
++mojom::CredentialUsePolicy SteadBrainService::CredentialUsePolicyForSession(
++    const std::string& session_id) const {
++  return CredentialUsePolicyForPermissionMode(PermissionModeForSession(session_id));
 +}
 +
 +}  // namespace stead
