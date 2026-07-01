@@ -36,3 +36,4 @@ stead/newtab/register-stead-newtab.patch
 stead/newtab/newtab-ntp-redirect.patch
 
 stead/agent-control/native-control-layer.patch
+stead/brain/brain-broker.patch

@@ -1,0 +1,1841 @@
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index bba11ffb8281e..a0ce850428e0 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -260,3 +260,5 @@ static_library("ui") {
+     "//chrome/browser/ui/stead/agent_control",
+     "//chrome/browser/ui/stead/agent_control:mojo_bindings",
++    "//chrome/browser/ui/stead/brain",
++    "//chrome/browser/ui/stead/brain:mojo_bindings",
+     ":url_identity",
+diff --git a/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc b/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc
+index 5d1bb0f28ecaa..cd4506fd0c12 100644
+--- a/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc
++++ b/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc
+@@ -31,2 +31,3 @@
+ #include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
++#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
+ #include "chrome/browser/ui/views/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_coordinator.h"
+@@ -428,3 +429,6 @@ void PopulateChromeWebUIFrameBindersPartsDesktop(
+                                          SteadSidebarUI, SteadChatUI,
+                                          SteadNewTabUI>(map);
++  RegisterWebUIControllerInterfaceBinder<stead::mojom::BrainConsole,
++                                         SteadSidebarUI, SteadChatUI,
++                                         SteadNewTabUI>(map);
+   RegisterWebUIControllerInterfaceBinder<
+@@ -617,3 +621,6 @@ void PopulateChromeWebUIFrameInterfaceBrokersTrustedPartsDesktop(
+   registry.ForWebUI<SteadChatUI>().Add<stead::mojom::ControlConsole>();
+   registry.ForWebUI<SteadNewTabUI>().Add<stead::mojom::ControlConsole>();
++  registry.ForWebUI<SteadSidebarUI>().Add<stead::mojom::BrainConsole>();
++  registry.ForWebUI<SteadChatUI>().Add<stead::mojom::BrainConsole>();
++  registry.ForWebUI<SteadNewTabUI>().Add<stead::mojom::BrainConsole>();
+ 
+diff --git a/chrome/browser/ui/stead/brain/BUILD.gn b/chrome/browser/ui/stead/brain/BUILD.gn
+new file mode 100644
+index 0000000000000..e672d246e9a2
+--- /dev/null
++++ b/chrome/browser/ui/stead/brain/BUILD.gn
+@@ -0,0 +1,37 @@
++# Copyright 2026 The Stead Authors
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++import("//mojo/public/tools/bindings/mojom.gni")
++
++mojom("mojo_bindings") {
++  sources = [ "brain_console.mojom" ]
++  webui_module_path = "/"
++
++  public_deps = [
++    "//url/mojom:url_mojom_gurl",
++  ]
++}
++
++source_set("brain") {
++  sources = [
++    "stead_brain_service.cc",
++    "stead_brain_service.h",
++    "stead_brain_service_factory.cc",
++    "stead_brain_service_factory.h",
++  ]
++
++  deps = [
++    ":mojo_bindings",
++    "//base",
++    "//chrome/browser/profiles:profile",
++    "//chrome/browser/ui/stead/agent_control",
++    "//chrome/browser/ui/stead/agent_control:mojo_bindings",
++    "//components/keyed_service/core",
++    "//content/public/browser",
++    "//mojo/public/cpp/base",
++    "//mojo/public/cpp/bindings",
++    "//ui/gfx/geometry",
++    "//url",
++  ]
++}
+diff --git a/chrome/browser/ui/stead/brain/brain_console.mojom b/chrome/browser/ui/stead/brain/brain_console.mojom
+new file mode 100644
+index 0000000000000..b0bf93ec80ec
+--- /dev/null
++++ b/chrome/browser/ui/stead/brain/brain_console.mojom
+@@ -0,0 +1,69 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++module stead.mojom;
++
++// WebUI-facing brain event envelope. The browser keeps lifecycle/process
++// ownership; payload_json is the exact secret-redacted JSON event emitted by
++// the bundled stead-brain helper.
++struct BrainEvent {
++  string type;
++  string request_id;
++  string session_id;
++  string payload_json;
++};
++
++struct BrainResult {
++  bool ok;
++  string request_id;
++  string code;
++  string message;
++};
++
++struct BrainTabContext {
++  int32 tab_id;
++  string url;
++  string title;
++};
++
++struct BrainModelSelection {
++  string provider;
++  string model;
++};
++
++interface BrainObserver {
++  OnBrainEvent(BrainEvent event);
++};
++
++// WebUI-facing surface for sessions/model auth. It intentionally exposes no
++// AgentControl methods; browser actions must go through the helper's tool-call
++// path and the browser-side broker.
++interface BrainConsole {
++  AddObserver(pending_remote<BrainObserver> observer);
++
++  // Starts the bundled helper lazily and sends the initialize frame.
++  Initialize() => (BrainResult result);
++  ShutdownBrain() => (BrainResult result);
++
++  CreateSession(string? title, string origin_surface)
++      => (BrainResult result);
++  ListSessions() => (BrainResult result);
++  LoadSession(string session_id) => (BrainResult result);
++  SendMessage(string session_id, string text, BrainTabContext? tab_context,
++      BrainModelSelection? model) => (BrainResult result);
++  CancelTurn(string session_id) => (BrainResult result);
++
++  ListProviderAuth() => (BrainResult result);
++  ListModels() => (BrainResult result);
++  StartProviderOAuth(string provider) => (BrainResult result);
++  ImportCodexAuth(string? path) => (BrainResult result);
++  ClearProviderCredential(string provider) => (BrainResult result);
++
++  // API-key entry is a temporary dev/product surface until the provider
++  // settings UI swaps storage to Keychain. Secrets go only to the helper stdin;
++  // they are never echoed back through BrainEvent.
++  SetProviderApiKey(string provider, string api_key) => (BrainResult result);
++  RespondToUserPrompt(string session_id, string tool_call_id,
++      string response_json, bool cancelled) => (BrainResult result);
++};
+diff --git a/chrome/browser/ui/stead/brain/stead_brain_service_factory.cc b/chrome/browser/ui/stead/brain/stead_brain_service_factory.cc
+new file mode 100644
+index 0000000000000..74874e445055
+--- /dev/null
++++ b/chrome/browser/ui/stead/brain/stead_brain_service_factory.cc
+@@ -0,0 +1,60 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"
++
++#include <memory>
++#include <utility>
++
++#include "base/no_destructor.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_selections.h"
++#include "chrome/browser/ui/stead/brain/stead_brain_service.h"
++#include "components/keyed_service/core/keyed_service.h"
++
++namespace stead {
++
++// static
++SteadBrainService* SteadBrainServiceFactory::GetForProfile(Profile* profile) {
++  if (!profile) {
++    return nullptr;
++  }
++  return static_cast<SteadBrainService*>(
++      GetInstance()->GetServiceForBrowserContext(profile, /*create=*/true));
++}
++
++// static
++SteadBrainServiceFactory* SteadBrainServiceFactory::GetInstance() {
++  static base::NoDestructor<SteadBrainServiceFactory> instance;
++  return instance.get();
++}
++
++// static
++void SteadBrainServiceFactory::BindBrainConsole(
++    Profile* profile,
++    mojo::PendingReceiver<mojom::BrainConsole> receiver) {
++  SteadBrainService* service = GetForProfile(profile);
++  if (!service) {
++    return;
++  }
++  service->Bind(std::move(receiver));
++}
++
++SteadBrainServiceFactory::SteadBrainServiceFactory()
++    : ProfileKeyedServiceFactory("SteadBrainService",
++                                 ProfileSelections::BuildForRegularProfile()) {}
++
++SteadBrainServiceFactory::~SteadBrainServiceFactory() = default;
++
++std::unique_ptr<KeyedService>
++SteadBrainServiceFactory::BuildServiceInstanceForBrowserContext(
++    content::BrowserContext* context) const {
++  Profile* profile = Profile::FromBrowserContext(context);
++  if (!profile) {
++    return nullptr;
++  }
++  return std::make_unique<SteadBrainService>(profile);
++}
++
++}  // namespace stead
+diff --git a/chrome/browser/ui/stead/brain/stead_brain_service_factory.h b/chrome/browser/ui/stead/brain/stead_brain_service_factory.h
+new file mode 100644
+index 0000000000000..2ce9825ab5c2
+--- /dev/null
++++ b/chrome/browser/ui/stead/brain/stead_brain_service_factory.h
+@@ -0,0 +1,49 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_SERVICE_FACTORY_H_
++#define CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_SERVICE_FACTORY_H_
++
++#include <memory>
++
++#include "chrome/browser/profiles/profile_keyed_service_factory.h"
++#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
++#include "mojo/public/cpp/bindings/pending_receiver.h"
++
++namespace base {
++template <typename T>
++class NoDestructor;
++}  // namespace base
++
++class KeyedService;
++class Profile;
++
++namespace stead {
++
++class SteadBrainService;
++
++// Profile-owned browser broker for the bundled stead-brain helper.
++class SteadBrainServiceFactory : public ProfileKeyedServiceFactory {
++ public:
++  static SteadBrainService* GetForProfile(Profile* profile);
++  static SteadBrainServiceFactory* GetInstance();
++
++  static void BindBrainConsole(
++      Profile* profile,
++      mojo::PendingReceiver<mojom::BrainConsole> receiver);
++
++ private:
++  friend base::NoDestructor<SteadBrainServiceFactory>;
++
++  SteadBrainServiceFactory();
++  ~SteadBrainServiceFactory() override;
++
++  // BrowserContextKeyedServiceFactory:
++  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
++      content::BrowserContext* context) const override;
++};
++
++}  // namespace stead
++
++#endif  // CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_SERVICE_FACTORY_H_
+diff --git a/chrome/browser/ui/stead/brain/stead_brain_service.h b/chrome/browser/ui/stead/brain/stead_brain_service.h
+new file mode 100644
+index 0000000000000..962a5a6a98f8
+--- /dev/null
++++ b/chrome/browser/ui/stead/brain/stead_brain_service.h
+@@ -0,0 +1,130 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_SERVICE_H_
++#define CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_SERVICE_H_
++
++#include <memory>
++#include <set>
++#include <string>
++
++#include "base/files/file_path.h"
++#include "base/files/scoped_file.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/process/process.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/values.h"
++#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
++#include "components/keyed_service/core/keyed_service.h"
++#include "mojo/public/cpp/bindings/receiver_set.h"
++#include "mojo/public/cpp/bindings/remote_set.h"
++
++class Profile;
++
++namespace stead {
++
++class SteadBrainService : public KeyedService, public mojom::BrainConsole {
++ public:
++  explicit SteadBrainService(Profile* profile);
++  SteadBrainService(const SteadBrainService&) = delete;
++  SteadBrainService& operator=(const SteadBrainService&) = delete;
++  ~SteadBrainService() override;
++
++  void Bind(mojo::PendingReceiver<mojom::BrainConsole> receiver);
++
++  // KeyedService:
++  void Shutdown() override;
++
++  // mojom::BrainConsole:
++  void AddObserver(mojo::PendingRemote<mojom::BrainObserver> observer) override;
++  void Initialize(InitializeCallback callback) override;
++  void ShutdownBrain(ShutdownBrainCallback callback) override;
++  void CreateSession(const std::optional<std::string>& title,
++                     const std::string& origin_surface,
++                     CreateSessionCallback callback) override;
++  void ListSessions(ListSessionsCallback callback) override;
++  void LoadSession(const std::string& session_id,
++                   LoadSessionCallback callback) override;
++  void SendMessage(const std::string& session_id,
++                   const std::string& text,
++                   mojom::BrainTabContextPtr tab_context,
++                   mojom::BrainModelSelectionPtr model,
++                   SendMessageCallback callback) override;
++  void CancelTurn(const std::string& session_id,
++                  CancelTurnCallback callback) override;
++  void ListProviderAuth(ListProviderAuthCallback callback) override;
++  void ListModels(ListModelsCallback callback) override;
++  void StartProviderOAuth(const std::string& provider,
++                          StartProviderOAuthCallback callback) override;
++  void ImportCodexAuth(const std::optional<std::string>& path,
++                       ImportCodexAuthCallback callback) override;
++  void ClearProviderCredential(const std::string& provider,
++                               ClearProviderCredentialCallback callback) override;
++  void SetProviderApiKey(const std::string& provider,
++                         const std::string& api_key,
++                         SetProviderApiKeyCallback callback) override;
++  void RespondToUserPrompt(const std::string& session_id,
++                           const std::string& tool_call_id,
++                           const std::string& response_json,
++                           bool cancelled,
++                           RespondToUserPromptCallback callback) override;
++
++ private:
++  static void ReadStdoutLoop(
++      base::ScopedFD stdout_fd,
++      scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
++      base::WeakPtr<SteadBrainService> weak_service);
++
++  bool EnsureStarted(std::string* error_message);
++  bool LaunchHelper(std::string* error_message);
++  void StopHelper();
++  base::FilePath ResolveHelperPath() const;
++
++  std::string NextRequestId();
++  mojom::BrainResultPtr SendRequest(base::DictValue request);
++  bool WriteLine(std::string_view line);
++  void SendInitializeIfNeeded();
++  base::DictValue MakeRequest(std::string_view type, const std::string& request_id);
++  mojom::BrainResultPtr MakeResult(bool ok,
++                                   std::string request_id,
++                                   std::string code,
++                                   std::string message);
++
++  void OnBrainLine(std::string line);
++  void OnBrainPipeClosed();
++  void EmitEvent(const base::DictValue& event);
++  void HandleToolCall(const base::DictValue& event);
++  void SendToolResult(const std::string& session_id,
++                      const std::string& tool_call_id,
++                      bool ok,
++                      base::DictValue content,
++                      std::optional<std::string> error,
++                      bool tainted);
++  void SendToolError(const std::string& session_id,
++                     const std::string& tool_call_id,
++                     std::string message);
++  void SendToolUnavailableResult(const std::string& session_id,
++                                 const std::string& tool_call_id,
++                                 const std::string& tool_name);
++  std::string UserPromptKey(const std::string& session_id,
++                            const std::string& tool_call_id) const;
++
++  raw_ptr<Profile> profile_;
++  mojo::ReceiverSet<mojom::BrainConsole> receivers_;
++  mojo::RemoteSet<mojom::BrainObserver> observers_;
++
++  base::Process process_;
++  base::ScopedFD stdin_write_;
++  bool initialized_ = false;
++  int64_t next_request_id_ = 1;
++  std::set<std::string> pending_user_prompts_;
++
++  base::WeakPtrFactory<SteadBrainService> weak_factory_{this};
++};
++
++}  // namespace stead
++
++#endif  // CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_SERVICE_H_
+diff --git a/chrome/browser/ui/stead/brain/stead_brain_service.cc b/chrome/browser/ui/stead/brain/stead_brain_service.cc
+new file mode 100644
+index 0000000000000..71246ae8e56d
+--- /dev/null
++++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
+@@ -0,0 +1,1332 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/stead/brain/stead_brain_service.h"
++
++#include <fcntl.h>
++#include <unistd.h>
++
++#include <optional>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/base64.h"
++#include "base/command_line.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/logging.h"
++#include "base/path_service.h"
++#include "base/posix/eintr_wrapper.h"
++#include "base/process/launch.h"
++#include "base/strings/number_conversions.h"
++#include "base/strings/strcat.h"
++#include "base/strings/stringprintf.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/thread_pool.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
++#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
++#include "ui/gfx/geometry/point.h"
++#include "ui/gfx/geometry/rect.h"
++#include "url/gurl.h"
++#include "url/origin.h"
++
++namespace stead {
++namespace {
++
++constexpr int kProtocolVersion = 1;
++constexpr size_t kMaxBrainLineBytes = 4 * 1024 * 1024;
++constexpr size_t kMaxBrainImageBytes = 2 * 1024 * 1024;
++
++std::string OptionalString(const base::DictValue& dict, std::string_view key) {
++  const std::string* value = dict.FindString(key);
++  return value ? *value : std::string();
++}
++
++base::DictValue EmptyDict() {
++  return base::DictValue();
++}
++
++std::optional<int32_t> FindInt32(const base::DictValue& dict,
++                                 std::string_view key);
++
++base::DictValue ActionResultToDict(const mojom::ActionResult& result) {
++  base::DictValue out;
++  out.Set("action_id", result.action_id);
++  out.Set("ok", result.ok);
++  out.Set("code", result.code);
++  out.Set("message", result.message);
++  out.Set("stale", result.stale);
++  out.Set("needs_snapshot", result.needs_snapshot);
++  out.Set("needs_confirmation", result.needs_confirmation);
++  out.Set("target_missing", result.target_missing);
++  out.Set("blocked_by", result.blocked_by);
++  out.Set("new_generation", static_cast<int>(result.new_generation));
++  return out;
++}
++
++base::DictValue ReadResultToDict(const mojom::ReadResult& result) {
++  base::DictValue out;
++  out.Set("ok", result.ok);
++  out.Set("code", result.code);
++  out.Set("message", result.message);
++  out.Set("blocked_by", result.blocked_by);
++  return out;
++}
++
++base::DictValue FrameRefToDict(const mojom::FrameRef& frame) {
++  base::DictValue out;
++  out.Set("tab_id", frame.tab_id);
++  out.Set("frame_token", frame.frame_token);
++  out.Set("snapshot_generation", static_cast<int>(frame.snapshot_generation));
++  return out;
++}
++
++base::DictValue NodeRefToDict(const mojom::NodeRef& ref) {
++  base::DictValue out;
++  if (ref.frame) {
++    out.Set("frame", FrameRefToDict(*ref.frame));
++  }
++  out.Set("ax_node_id", ref.ax_node_id);
++  return out;
++}
++
++base::DictValue AxNodeToDict(const mojom::AxNode& node) {
++  base::DictValue out;
++  if (node.ref) {
++    out.Set("ref", NodeRefToDict(*node.ref));
++  }
++  out.Set("role", node.role);
++  out.Set("name", node.name);
++  out.Set("has_value", node.has_value);
++  if (node.has_value) {
++    out.Set("value", node.value);
++  }
++  out.Set("has_checked", node.has_checked);
++  if (node.has_checked) {
++    out.Set("checked", node.checked);
++  }
++  out.Set("clickable", node.clickable);
++  out.Set("editable", node.editable);
++  out.Set("focused", node.focused);
++  out.Set("disabled", node.disabled);
++  out.Set("has_bounds", node.has_bounds);
++  if (node.has_bounds) {
++    base::DictValue bounds;
++    bounds.Set("x", node.bounds.x());
++    bounds.Set("y", node.bounds.y());
++    bounds.Set("width", node.bounds.width());
++    bounds.Set("height", node.bounds.height());
++    out.Set("bounds", std::move(bounds));
++  }
++  base::ListValue children;
++  for (const mojom::AxNodePtr& child : node.children) {
++    if (child) {
++      children.Append(AxNodeToDict(*child));
++    }
++  }
++  out.Set("children", std::move(children));
++  return out;
++}
++
++base::DictValue SnapshotToDict(const mojom::Snapshot& snapshot) {
++  base::DictValue out;
++  out.Set("tab_id", snapshot.tab_id);
++  out.Set("url", snapshot.url);
++  out.Set("title", snapshot.title);
++  out.Set("generation", static_cast<int>(snapshot.generation));
++  out.Set("node_count", static_cast<int>(snapshot.node_count));
++  out.Set("truncated", snapshot.truncated);
++  out.Set("capture_time_us", base::NumberToString(snapshot.capture_time_us));
++  if (snapshot.root) {
++    out.Set("root", AxNodeToDict(*snapshot.root));
++  }
++  return out;
++}
++
++base::DictValue TabInfoToDict(const mojom::TabInfo& tab) {
++  base::DictValue out;
++  out.Set("tab_id", tab.tab_id);
++  out.Set("url", tab.url);
++  out.Set("title", tab.title);
++  out.Set("active", tab.active);
++  out.Set("likely_authenticated", tab.likely_authenticated);
++  return out;
++}
++
++base::DictValue RectToDict(const gfx::Rect& rect) {
++  base::DictValue out;
++  out.Set("x", rect.x());
++  out.Set("y", rect.y());
++  out.Set("width", rect.width());
++  out.Set("height", rect.height());
++  return out;
++}
++
++base::DictValue NodeProbeToDict(const mojom::NodeProbe& probe) {
++  base::DictValue out;
++  out.Set("found", probe.found);
++  out.Set("target_matched", probe.target_matched);
++  out.Set("occluded", probe.occluded);
++  out.Set("visible", probe.visible);
++  out.Set("disabled", probe.disabled);
++  out.Set("editable", probe.editable);
++  out.Set("tag_name", probe.tag_name);
++  out.Set("id", probe.id);
++  out.Set("class_name", probe.class_name);
++  out.Set("name_attr", probe.name_attr);
++  out.Set("type_attr", probe.type_attr);
++  out.Set("role_attr", probe.role_attr);
++  out.Set("aria_label", probe.aria_label);
++  out.Set("display", probe.display);
++  out.Set("visibility", probe.visibility);
++  out.Set("pointer_events", probe.pointer_events);
++  out.Set("cursor", probe.cursor);
++  out.Set("opacity", probe.opacity);
++  out.Set("client_rect", RectToDict(probe.client_rect));
++  base::ListValue stack;
++  for (const std::string& entry : probe.hit_test_stack) {
++    stack.Append(entry);
++  }
++  out.Set("hit_test_stack", std::move(stack));
++  return out;
++}
++
++base::DictValue CredentialRefToDict(const mojom::CredentialRef& credential) {
++  base::DictValue out;
++  out.Set("handle", credential.handle);
++  out.Set("label", credential.label);
++  out.Set("source", credential.source);
++  out.Set("has_totp", credential.has_totp);
++  out.Set("has_passkey", credential.has_passkey);
++  return out;
++}
++
++mojom::CredentialRefPtr ParseCredentialRef(const base::DictValue& dict) {
++  const std::string* handle = dict.FindString("handle");
++  if (!handle || handle->empty()) {
++    return nullptr;
++  }
++  auto credential = mojom::CredentialRef::New();
++  credential->handle = *handle;
++  credential->label = OptionalString(dict, "label");
++  credential->source = OptionalString(dict, "source");
++  credential->has_totp = dict.FindBool("has_totp").value_or(false);
++  credential->has_passkey = dict.FindBool("has_passkey").value_or(false);
++  return credential;
++}
++
++std::optional<gfx::Point> ParsePoint(const base::DictValue& args,
++                                     std::string_view key) {
++  const base::DictValue* dict = args.FindDict(key);
++  if (!dict) {
++    dict = &args;
++  }
++  std::optional<int32_t> x = FindInt32(*dict, "x");
++  std::optional<int32_t> y = FindInt32(*dict, "y");
++  if (!x || !y) {
++    return std::nullopt;
++  }
++  return gfx::Point(*x, *y);
++}
++
++std::vector<std::string> ParseStringList(const base::DictValue& args,
++                                         std::string_view key) {
++  std::vector<std::string> out;
++  const base::ListValue* list = args.FindList(key);
++  if (!list) {
++    return out;
++  }
++  for (const base::Value& value : *list) {
++    if (value.is_string()) {
++      out.push_back(value.GetString());
++    }
++  }
++  return out;
++}
++
++std::optional<int32_t> FindInt32(const base::DictValue& dict,
++                                 std::string_view key) {
++  std::optional<int> value = dict.FindInt(key);
++  if (!value) {
++    return std::nullopt;
++  }
++  return static_cast<int32_t>(*value);
++}
++
++mojom::FrameRefPtr ParseFrameRef(const base::DictValue& dict) {
++  std::optional<int32_t> tab_id = FindInt32(dict, "tab_id");
++  const std::string* frame_token = dict.FindString("frame_token");
++  std::optional<int32_t> generation = FindInt32(dict, "snapshot_generation");
++  if (!tab_id || !frame_token || !generation || *generation < 0) {
++    return nullptr;
++  }
++  return mojom::FrameRef::New(*tab_id, *frame_token,
++                              static_cast<uint32_t>(*generation));
++}
++
++mojom::NodeRefPtr ParseNodeRef(const base::DictValue& dict) {
++  const base::DictValue* frame_dict = dict.FindDict("frame");
++  std::optional<int32_t> ax_node_id = FindInt32(dict, "ax_node_id");
++  if (!frame_dict || !ax_node_id) {
++    return nullptr;
++  }
++  mojom::FrameRefPtr frame = ParseFrameRef(*frame_dict);
++  if (!frame) {
++    return nullptr;
++  }
++  return mojom::NodeRef::New(std::move(frame), *ax_node_id);
++}
++
++mojom::NodeRefPtr ParseNodeRefArg(const base::DictValue& args) {
++  if (const base::DictValue* ref = args.FindDict("ref")) {
++    return ParseNodeRef(*ref);
++  }
++  return ParseNodeRef(args);
++}
++
++mojom::FrameRefPtr ParseFrameRefArg(const base::DictValue& args) {
++  if (const base::DictValue* frame = args.FindDict("frame")) {
++    return ParseFrameRef(*frame);
++  }
++  return ParseFrameRef(args);
++}
++
++mojom::SnapshotOptionsPtr ParseSnapshotOptions(const base::DictValue& args) {
++  auto options = mojom::SnapshotOptions::New();
++  options->max_nodes = 0;
++  options->include_bounds = true;
++  options->include_values = true;
++  if (std::optional<int32_t> max_nodes = FindInt32(args, "max_nodes");
++      max_nodes && *max_nodes > 0) {
++    options->max_nodes = static_cast<uint32_t>(*max_nodes);
++  }
++  if (std::optional<bool> include_bounds = args.FindBool("include_bounds")) {
++    options->include_bounds = *include_bounds;
++  }
++  if (std::optional<bool> include_values = args.FindBool("include_values")) {
++    options->include_values = *include_values;
++  }
++  return options;
++}
++
++}  // namespace
++
++SteadBrainService::SteadBrainService(Profile* profile) : profile_(profile) {}
++
++SteadBrainService::~SteadBrainService() = default;
++
++void SteadBrainService::Bind(
++    mojo::PendingReceiver<mojom::BrainConsole> receiver) {
++  receivers_.Add(this, std::move(receiver));
++}
++
++void SteadBrainService::Shutdown() {
++  weak_factory_.InvalidateWeakPtrs();
++  receivers_.Clear();
++  observers_.Clear();
++  pending_user_prompts_.clear();
++  StopHelper();
++  profile_ = nullptr;
++}
++
++void SteadBrainService::AddObserver(
++    mojo::PendingRemote<mojom::BrainObserver> observer) {
++  observers_.Add(std::move(observer));
++  SendInitializeIfNeeded();
++}
++
++void SteadBrainService::Initialize(InitializeCallback callback) {
++  SendInitializeIfNeeded();
++  std::move(callback).Run(MakeResult(true, std::string(), "accepted",
++                                     "Brain initialization requested."));
++}
++
++void SteadBrainService::ShutdownBrain(ShutdownBrainCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("shutdown", request_id);
++  mojom::BrainResultPtr result = SendRequest(std::move(request));
++  StopHelper();
++  std::move(callback).Run(std::move(result));
++}
++
++void SteadBrainService::CreateSession(
++    const std::optional<std::string>& title,
++    const std::string& origin_surface,
++    CreateSessionCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("create_session", request_id);
++  if (title && !title->empty()) {
++    request.Set("title", *title);
++  }
++  if (!origin_surface.empty()) {
++    request.Set("origin_surface", origin_surface);
++  }
++  std::move(callback).Run(SendRequest(std::move(request)));
++}
++
++void SteadBrainService::ListSessions(ListSessionsCallback callback) {
++  const std::string request_id = NextRequestId();
++  std::move(callback).Run(SendRequest(MakeRequest("list_sessions", request_id)));
++}
++
++void SteadBrainService::LoadSession(const std::string& session_id,
++                                    LoadSessionCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("load_session", request_id);
++  request.Set("session_id", session_id);
++  std::move(callback).Run(SendRequest(std::move(request)));
++}
++
++void SteadBrainService::SendMessage(const std::string& session_id,
++                                    const std::string& text,
++                                    mojom::BrainTabContextPtr tab_context,
++                                    mojom::BrainModelSelectionPtr model,
++                                    SendMessageCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("send_message", request_id);
++  request.Set("session_id", session_id);
++  request.Set("text", text);
++  if (tab_context) {
++    base::DictValue tab;
++    tab.Set("tab_id", tab_context->tab_id);
++    tab.Set("url", tab_context->url);
++    tab.Set("title", tab_context->title);
++    request.Set("tab_context", std::move(tab));
++  }
++  if (model) {
++    base::DictValue selection;
++    selection.Set("provider", model->provider);
++    selection.Set("model", model->model);
++    request.Set("model", std::move(selection));
++  }
++  std::move(callback).Run(SendRequest(std::move(request)));
++}
++
++void SteadBrainService::CancelTurn(const std::string& session_id,
++                                   CancelTurnCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("cancel_turn", request_id);
++  request.Set("session_id", session_id);
++  std::move(callback).Run(SendRequest(std::move(request)));
++}
++
++void SteadBrainService::ListProviderAuth(ListProviderAuthCallback callback) {
++  const std::string request_id = NextRequestId();
++  std::move(callback).Run(
++      SendRequest(MakeRequest("list_provider_auth", request_id)));
++}
++
++void SteadBrainService::ListModels(ListModelsCallback callback) {
++  const std::string request_id = NextRequestId();
++  std::move(callback).Run(SendRequest(MakeRequest("list_models", request_id)));
++}
++
++void SteadBrainService::StartProviderOAuth(
++    const std::string& provider,
++    StartProviderOAuthCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("start_provider_oauth", request_id);
++  request.Set("provider", provider);
++  std::move(callback).Run(SendRequest(std::move(request)));
++}
++
++void SteadBrainService::ImportCodexAuth(
++    const std::optional<std::string>& path,
++    ImportCodexAuthCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("import_codex_auth", request_id);
++  if (path && !path->empty()) {
++    request.Set("path", *path);
++  }
++  std::move(callback).Run(SendRequest(std::move(request)));
++}
++
++void SteadBrainService::ClearProviderCredential(
++    const std::string& provider,
++    ClearProviderCredentialCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("clear_provider_credential", request_id);
++  request.Set("provider", provider);
++  std::move(callback).Run(SendRequest(std::move(request)));
++}
++
++void SteadBrainService::SetProviderApiKey(
++    const std::string& provider,
++    const std::string& api_key,
++    SetProviderApiKeyCallback callback) {
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("set_provider_credential", request_id);
++  request.Set("provider", provider);
++  base::DictValue credential;
++  credential.Set("kind", "api_key");
++  credential.Set("value", api_key);
++  request.Set("credential", std::move(credential));
++  std::move(callback).Run(SendRequest(std::move(request)));
++}
++
++void SteadBrainService::RespondToUserPrompt(
++    const std::string& session_id,
++    const std::string& tool_call_id,
++    const std::string& response_json,
++    bool cancelled,
++    RespondToUserPromptCallback callback) {
++  const std::string request_id = NextRequestId();
++  const std::string key = UserPromptKey(session_id, tool_call_id);
++  auto it = pending_user_prompts_.find(key);
++  if (it == pending_user_prompts_.end()) {
++    std::move(callback).Run(MakeResult(
++        false, request_id, "prompt_not_pending",
++        "No pending ask_user prompt matched that session/tool id."));
++    return;
++  }
++  pending_user_prompts_.erase(it);
++
++  if (cancelled) {
++    SendToolResult(session_id, tool_call_id, false, EmptyDict(),
++                   "User cancelled the prompt.", /*tainted=*/false);
++    std::move(callback).Run(MakeResult(true, request_id, "accepted",
++                                       "Prompt cancellation sent."));
++    return;
++  }
++
++  if (response_json.size() > kMaxBrainLineBytes) {
++    pending_user_prompts_.insert(key);
++    std::move(callback).Run(MakeResult(false, request_id,
++                                       "prompt_response_too_large",
++                                       "Prompt response JSON was too large."));
++    return;
++  }
++  std::optional<base::DictValue> content =
++      base::JSONReader::ReadDict(response_json);
++  if (!content) {
++    std::move(callback).Run(MakeResult(
++        false, request_id, "invalid_prompt_response",
++        "Prompt response_json must be a JSON object."));
++    pending_user_prompts_.insert(key);
++    return;
++  }
++  SendToolResult(session_id, tool_call_id, true, std::move(*content),
++                 std::nullopt, /*tainted=*/false);
++  std::move(callback).Run(MakeResult(true, request_id, "accepted",
++                                     "Prompt response sent."));
++}
++
++void SteadBrainService::ReadStdoutLoop(
++    base::ScopedFD stdout_fd,
++    scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
++    base::WeakPtr<SteadBrainService> weak_service) {
++  std::string pending;
++  char buffer[4096];
++  for (;;) {
++    ssize_t n = HANDLE_EINTR(read(stdout_fd.get(), buffer, sizeof(buffer)));
++    if (n <= 0) {
++      break;
++    }
++    pending.append(buffer, static_cast<size_t>(n));
++    if (pending.size() > kMaxBrainLineBytes) {
++      pending.clear();
++    }
++    for (;;) {
++      size_t newline = pending.find('\n');
++      if (newline == std::string::npos) {
++        break;
++      }
++      std::string line = pending.substr(0, newline);
++      pending.erase(0, newline + 1);
++      ui_task_runner->PostTask(
++          FROM_HERE, base::BindOnce(&SteadBrainService::OnBrainLine,
++                                    weak_service, std::move(line)));
++    }
++  }
++  ui_task_runner->PostTask(
++      FROM_HERE,
++      base::BindOnce(&SteadBrainService::OnBrainPipeClosed, weak_service));
++}
++
++bool SteadBrainService::EnsureStarted(std::string* error_message) {
++  if (process_.IsValid() && stdin_write_.is_valid()) {
++    return true;
++  }
++  return LaunchHelper(error_message);
++}
++
++bool SteadBrainService::LaunchHelper(std::string* error_message) {
++  base::FilePath helper = ResolveHelperPath();
++  if (helper.empty()) {
++    *error_message = "Could not resolve stead-brain helper path.";
++    return false;
++  }
++  if (!base::PathExists(helper)) {
++    *error_message = "stead-brain helper was not found at " +
++                     helper.AsUTF8Unsafe() + ".";
++    return false;
++  }
++
++  base::ScopedFD child_stdin;
++  base::ScopedFD parent_stdin;
++  base::ScopedFD parent_stdout;
++  base::ScopedFD child_stdout;
++  if (!base::CreatePipe(&child_stdin, &parent_stdin) ||
++      !base::CreatePipe(&parent_stdout, &child_stdout)) {
++    *error_message = "Could not create stead-brain stdio pipes.";
++    return false;
++  }
++
++  base::LaunchOptions options;
++  options.fds_to_remap.emplace_back(child_stdin.get(), STDIN_FILENO);
++  options.fds_to_remap.emplace_back(child_stdout.get(), STDOUT_FILENO);
++
++  base::CommandLine command(helper);
++  process_ = base::LaunchProcess(command, options);
++  if (!process_.IsValid()) {
++    *error_message = "Could not launch stead-brain helper.";
++    return false;
++  }
++
++  child_stdin.reset();
++  child_stdout.reset();
++  stdin_write_ = std::move(parent_stdin);
++  initialized_ = false;
++
++  scoped_refptr<base::SequencedTaskRunner> ui_task_runner =
++      base::SequencedTaskRunner::GetCurrentDefault();
++  base::ThreadPool::PostTask(
++      FROM_HERE, {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
++      base::BindOnce(&SteadBrainService::ReadStdoutLoop, std::move(parent_stdout),
++                     std::move(ui_task_runner), weak_factory_.GetWeakPtr()));
++  return true;
++}
++
++void SteadBrainService::StopHelper() {
++  initialized_ = false;
++  pending_user_prompts_.clear();
++  stdin_write_.reset();
++  if (process_.IsValid()) {
++    process_.Terminate(0, /*wait=*/false);
++    process_.Close();
++  }
++}
++
++base::FilePath SteadBrainService::ResolveHelperPath() const {
++  base::FilePath exe_dir;
++  if (!base::PathService::Get(base::DIR_EXE, &exe_dir)) {
++    return base::FilePath();
++  }
++  return exe_dir.Append("stead-brain");
++}
++
++std::string SteadBrainService::NextRequestId() {
++  return base::StringPrintf("browser_%lld",
++                            static_cast<long long>(next_request_id_++));
++}
++
++mojom::BrainResultPtr SteadBrainService::SendRequest(base::DictValue request) {
++  std::string error_message;
++  std::string request_id = OptionalString(request, "request_id");
++  if (!EnsureStarted(&error_message)) {
++    return MakeResult(false, std::move(request_id), "brain_unavailable",
++                      std::move(error_message));
++  }
++  std::optional<std::string> json = base::WriteJson(request);
++  if (!json) {
++    return MakeResult(false, std::move(request_id), "json_encode_failed",
++                      "Could not encode brain request.");
++  }
++  json->push_back('\n');
++  if (!WriteLine(*json)) {
++    StopHelper();
++    return MakeResult(false, std::move(request_id), "brain_write_failed",
++                      "Could not write to stead-brain helper.");
++  }
++  return MakeResult(true, std::move(request_id), "accepted",
++                    "Request sent to stead-brain.");
++}
++
++bool SteadBrainService::WriteLine(std::string_view line) {
++  return stdin_write_.is_valid() &&
++         base::WriteFileDescriptor(stdin_write_.get(), line);
++}
++
++void SteadBrainService::SendInitializeIfNeeded() {
++  if (initialized_) {
++    return;
++  }
++  const std::string request_id = NextRequestId();
++  base::DictValue request = MakeRequest("initialize", request_id);
++  request.Set("dev_allow_config_files", false);
++  request.Set("approved_roots", base::ListValue());
++  mojom::BrainResultPtr result = SendRequest(std::move(request));
++  initialized_ = result->ok;
++}
++
++base::DictValue SteadBrainService::MakeRequest(std::string_view type,
++                                               const std::string& request_id) {
++  base::DictValue request;
++  request.Set("protocol_version", kProtocolVersion);
++  request.Set("request_id", request_id);
++  request.Set("type", type);
++  return request;
++}
++
++mojom::BrainResultPtr SteadBrainService::MakeResult(bool ok,
++                                                   std::string request_id,
++                                                   std::string code,
++                                                   std::string message) {
++  auto result = mojom::BrainResult::New();
++  result->ok = ok;
++  result->request_id = std::move(request_id);
++  result->code = std::move(code);
++  result->message = std::move(message);
++  return result;
++}
++
++void SteadBrainService::OnBrainLine(std::string line) {
++  std::optional<base::DictValue> event = base::JSONReader::ReadDict(line);
++  if (!event) {
++    base::DictValue error;
++    error.Set("type", "error");
++    error.Set("code", "malformed_brain_json");
++    error.Set("message", "stead-brain emitted malformed JSON.");
++    EmitEvent(error);
++    return;
++  }
++  if (const std::string* type = event->FindString("type");
++      type && *type == "ready") {
++    initialized_ = true;
++  }
++  EmitEvent(*event);
++  if (const std::string* type = event->FindString("type");
++      type && *type == "tool_call") {
++    HandleToolCall(*event);
++  }
++}
++
++void SteadBrainService::OnBrainPipeClosed() {
++  if (!process_.IsValid()) {
++    return;
++  }
++  process_.Close();
++  stdin_write_.reset();
++  initialized_ = false;
++  base::DictValue event;
++  event.Set("type", "error");
++  event.Set("code", "brain_exited");
++  event.Set("message", "stead-brain helper exited.");
++  EmitEvent(event);
++}
++
++void SteadBrainService::EmitEvent(const base::DictValue& event) {
++  auto out = mojom::BrainEvent::New();
++  out->type = OptionalString(event, "type");
++  out->request_id = OptionalString(event, "request_id");
++  out->session_id = OptionalString(event, "session_id");
++  out->payload_json = base::WriteJson(event).value_or("{}");
++  for (auto& observer : observers_) {
++    observer->OnBrainEvent(out.Clone());
++  }
++}
++
++void SteadBrainService::HandleToolCall(const base::DictValue& event) {
++  std::string session_id = OptionalString(event, "session_id");
++  std::string tool_call_id = OptionalString(event, "tool_call_id");
++  std::string tool_name = OptionalString(event, "name");
++  if (session_id.empty() || tool_call_id.empty()) {
++    return;
++  }
++  if (tool_name == "ask_user") {
++    pending_user_prompts_.insert(UserPromptKey(session_id, tool_call_id));
++    return;
++  }
++  const base::DictValue* args = event.FindDict("arguments");
++  base::DictValue empty_args;
++  const base::DictValue& arguments = args ? *args : empty_args;
++
++  SteadAgentControlService* control =
++      profile_ ? SteadAgentControlServiceFactory::GetForProfile(profile_)
++               : nullptr;
++  if (!control) {
++    SendToolError(session_id, tool_call_id,
++                  "Browser control service is not available.");
++    return;
++  }
++
++  auto action_done = [](base::WeakPtr<SteadBrainService> service,
++                        std::string session_id, std::string tool_call_id,
++                        mojom::ActionResultPtr result) {
++    if (!service) {
++      return;
++    }
++    if (!result) {
++      service->SendToolError(session_id, tool_call_id,
++                             "Browser action returned no result.");
++      return;
++    }
++    base::DictValue content;
++    content.Set("result", ActionResultToDict(*result));
++    std::optional<std::string> error;
++    if (!result->ok) {
++      error = result->message;
++    }
++    service->SendToolResult(session_id, tool_call_id, result->ok,
++                            std::move(content), std::move(error),
++                            /*tainted=*/false);
++  };
++
++  if (tool_name == "browser.list_tabs") {
++    control->ListTabs(base::BindOnce(
++        [](base::WeakPtr<SteadBrainService> service, std::string session_id,
++           std::string tool_call_id, std::vector<mojom::TabInfoPtr> tabs) {
++          if (!service) {
++            return;
++          }
++          base::ListValue list;
++          for (const mojom::TabInfoPtr& tab : tabs) {
++            if (tab) {
++              list.Append(TabInfoToDict(*tab));
++            }
++          }
++          base::DictValue content;
++          content.Set("tabs", std::move(list));
++          service->SendToolResult(session_id, tool_call_id, true,
++                                  std::move(content), std::nullopt,
++                                  /*tainted=*/false);
++        },
++        weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.snapshot") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    if (!tab_id) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.snapshot requires integer tab_id.");
++      return;
++    }
++    control->GetSnapshot(
++        *tab_id, ParseSnapshotOptions(arguments),
++        base::BindOnce(
++            [](base::WeakPtr<SteadBrainService> service,
++               std::string session_id, std::string tool_call_id,
++               mojom::ActionResultPtr result, mojom::SnapshotPtr snapshot) {
++              if (!service) {
++                return;
++              }
++              if (!result) {
++                service->SendToolError(session_id, tool_call_id,
++                                       "Snapshot returned no result.");
++                return;
++              }
++              base::DictValue content;
++              content.Set("result", ActionResultToDict(*result));
++              if (snapshot) {
++                content.Set("snapshot", SnapshotToDict(*snapshot));
++              }
++              std::optional<std::string> error;
++              if (!result->ok) {
++                error = result->message;
++              }
++              service->SendToolResult(session_id, tool_call_id, result->ok,
++                                      std::move(content), std::move(error),
++                                      /*tainted=*/false);
++            },
++            weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.navigate") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    const std::string* url = arguments.FindString("url");
++    if (!tab_id || !url) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.navigate requires tab_id and url.");
++      return;
++    }
++    control->Navigate(*tab_id, GURL(*url),
++                      base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
++                                     session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.open_tab") {
++    const std::string* url = arguments.FindString("url");
++    if (!url) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.open_tab requires url.");
++      return;
++    }
++    const bool agent_owned =
++        arguments.FindBool("agent_owned").value_or(true);
++    control->OpenTab(
++        GURL(*url), agent_owned,
++        base::BindOnce(
++            [](base::WeakPtr<SteadBrainService> service,
++               std::string session_id, std::string tool_call_id,
++               mojom::ActionResultPtr result, int32_t tab_id) {
++              if (!service) {
++                return;
++              }
++              if (!result) {
++                service->SendToolError(session_id, tool_call_id,
++                                       "OpenTab returned no result.");
++                return;
++              }
++              base::DictValue content;
++              content.Set("result", ActionResultToDict(*result));
++              content.Set("tab_id", tab_id);
++              std::optional<std::string> error;
++              if (!result->ok) {
++                error = result->message;
++              }
++              service->SendToolResult(session_id, tool_call_id, result->ok,
++                                      std::move(content), std::move(error),
++                                      /*tainted=*/false);
++            },
++            weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.close_tab") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    if (!tab_id) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.close_tab requires integer tab_id.");
++      return;
++    }
++    control->CloseTab(*tab_id,
++                      base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
++                                     session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.probe_node") {
++    mojom::NodeRefPtr ref = ParseNodeRefArg(arguments);
++    if (!ref) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.probe_node requires ref { frame, ax_node_id }.");
++      return;
++    }
++    control->ProbeNode(
++        std::move(ref),
++        base::BindOnce(
++            [](base::WeakPtr<SteadBrainService> service,
++               std::string session_id, std::string tool_call_id,
++               mojom::ReadResultPtr result, mojom::NodeProbePtr probe) {
++              if (!service) {
++                return;
++              }
++              if (!result) {
++                service->SendToolError(session_id, tool_call_id,
++                                       "ProbeNode returned no result.");
++                return;
++              }
++              base::DictValue content;
++              content.Set("result", ReadResultToDict(*result));
++              if (probe) {
++                content.Set("probe", NodeProbeToDict(*probe));
++              }
++              std::optional<std::string> error;
++              if (!result->ok) {
++                error = result->message;
++              }
++              service->SendToolResult(session_id, tool_call_id, result->ok,
++                                      std::move(content), std::move(error),
++                                      /*tainted=*/false);
++            },
++            weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.screenshot") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    if (!tab_id) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.screenshot requires integer tab_id.");
++      return;
++    }
++    mojom::NodeRefPtr ref;
++    if (arguments.FindDict("ref")) {
++      ref = ParseNodeRefArg(arguments);
++      if (!ref) {
++        SendToolError(session_id, tool_call_id,
++                      "browser.screenshot ref was invalid.");
++        return;
++      }
++    }
++    control->Screenshot(
++        *tab_id, std::move(ref),
++        base::BindOnce(
++            [](base::WeakPtr<SteadBrainService> service,
++               std::string session_id, std::string tool_call_id,
++               mojom::ReadResultPtr result,
++               std::optional<mojo_base::BigBuffer> png) {
++              if (!service) {
++                return;
++              }
++              if (!result) {
++                service->SendToolError(session_id, tool_call_id,
++                                       "Screenshot returned no result.");
++                return;
++              }
++              base::DictValue content;
++              content.Set("result", ReadResultToDict(*result));
++              if (result->ok && png) {
++                content.Set("image_bytes",
++                            base::NumberToString(png->size()));
++                if (png->size() <= kMaxBrainImageBytes) {
++                  content.Set("mime_type", "image/png");
++                  content.Set("image_base64",
++                              base::Base64Encode(base::span(*png)));
++                  content.Set("image_included", true);
++                } else {
++                  content.Set("image_omitted", true);
++                  content.Set("reason",
++                              "Screenshot exceeded the brain stdio image cap.");
++                }
++              } else {
++                content.Set("image_omitted", true);
++                if (result->ok) {
++                  content.Set("reason", "Screenshot returned no PNG payload.");
++                }
++              }
++              std::optional<std::string> error;
++              if (!result->ok) {
++                error = result->message;
++              }
++              service->SendToolResult(session_id, tool_call_id, result->ok,
++                                      std::move(content), std::move(error),
++                                      /*tainted=*/false);
++            },
++            weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.eval") {
++    mojom::FrameRefPtr frame = ParseFrameRefArg(arguments);
++    const std::string* js = arguments.FindString("js");
++    if (!frame || !js) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.eval requires frame and js.");
++      return;
++    }
++    control->Eval(
++        std::move(frame), *js,
++        base::BindOnce(
++            [](base::WeakPtr<SteadBrainService> service,
++               std::string session_id, std::string tool_call_id,
++               mojom::ActionResultPtr result,
++               std::optional<std::string> json_result) {
++              if (!service) {
++                return;
++              }
++              if (!result) {
++                service->SendToolError(session_id, tool_call_id,
++                                       "Eval returned no result.");
++                return;
++              }
++              base::DictValue content;
++              content.Set("result", ActionResultToDict(*result));
++              if (json_result) {
++                content.Set("json_result", *json_result);
++              }
++              std::optional<std::string> error;
++              if (!result->ok) {
++                error = result->message;
++              }
++              service->SendToolResult(session_id, tool_call_id, result->ok,
++                                      std::move(content), std::move(error),
++                                      /*tainted=*/false);
++            },
++            weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.key") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    const std::string* key = arguments.FindString("key");
++    if (!tab_id || !key) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.key requires tab_id and key.");
++      return;
++    }
++    const int32_t modifiers = FindInt32(arguments, "modifiers").value_or(0);
++    control->Key(*tab_id, *key, modifiers,
++                 base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
++                                session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.scroll") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    std::optional<int32_t> dx = FindInt32(arguments, "dx");
++    std::optional<int32_t> dy = FindInt32(arguments, "dy");
++    if (!tab_id || !dx || !dy) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.scroll requires tab_id, dx, and dy.");
++      return;
++    }
++    control->Scroll(*tab_id, *dx, *dy,
++                    base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
++                                   session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.mouse_move" || tool_name == "browser.mouse_down" ||
++      tool_name == "browser.mouse_up" || tool_name == "browser.mouse_click") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    std::optional<gfx::Point> point = ParsePoint(arguments, "point");
++    if (!tab_id || !point) {
++      SendToolError(session_id, tool_call_id,
++                    "Mouse tool requires tab_id and point {x,y}.");
++      return;
++    }
++    const int32_t button = FindInt32(arguments, "button").value_or(0);
++    const int32_t click_count =
++        FindInt32(arguments, "click_count").value_or(1);
++    auto callback = base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
++                                  session_id, tool_call_id);
++    if (tool_name == "browser.mouse_move") {
++      control->MouseMove(*tab_id, *point, std::move(callback));
++    } else if (tool_name == "browser.mouse_down") {
++      control->MouseDown(*tab_id, *point, button, click_count,
++                         std::move(callback));
++    } else if (tool_name == "browser.mouse_up") {
++      control->MouseUp(*tab_id, *point, button, click_count,
++                       std::move(callback));
++    } else {
++      control->MouseClick(*tab_id, *point, button, click_count,
++                          std::move(callback));
++    }
++    return;
++  }
++
++  if (tool_name == "browser.mouse_drag") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    std::optional<gfx::Point> from = ParsePoint(arguments, "from");
++    std::optional<gfx::Point> to = ParsePoint(arguments, "to");
++    if (!tab_id || !from || !to) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.mouse_drag requires tab_id, from, and to.");
++      return;
++    }
++    const int32_t button = FindInt32(arguments, "button").value_or(0);
++    const int32_t steps = FindInt32(arguments, "steps").value_or(8);
++    control->MouseDrag(*tab_id, *from, *to, button, steps,
++                       base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
++                                      session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.handle_dialog") {
++    const std::string* handle = arguments.FindString("handle");
++    if (!handle) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.handle_dialog requires handle.");
++      return;
++    }
++    const bool accept = arguments.FindBool("accept").value_or(true);
++    control->HandleDialog(
++        *handle, accept, OptionalString(arguments, "prompt_text"),
++        base::BindOnce(action_done, weak_factory_.GetWeakPtr(), session_id,
++                       tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.handle_file_chooser") {
++    const std::string* handle = arguments.FindString("handle");
++    if (!handle) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.handle_file_chooser requires handle.");
++      return;
++    }
++    control->HandleFileChooser(
++        *handle, ParseStringList(arguments, "paths"),
++        base::BindOnce(action_done, weak_factory_.GetWeakPtr(), session_id,
++                       tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.click" || tool_name == "browser.focus" ||
++      tool_name == "browser.scroll_into_view" ||
++      tool_name == "browser.fill") {
++    mojom::NodeRefPtr ref = ParseNodeRefArg(arguments);
++    if (!ref) {
++      SendToolError(session_id, tool_call_id,
++                    "Node action requires ref { frame, ax_node_id }.");
++      return;
++    }
++    auto callback = base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
++                                  session_id, tool_call_id);
++    if (tool_name == "browser.click") {
++      control->Click(std::move(ref), std::move(callback));
++    } else if (tool_name == "browser.focus") {
++      control->Focus(std::move(ref), std::move(callback));
++    } else if (tool_name == "browser.scroll_into_view") {
++      control->ScrollIntoView(std::move(ref), std::move(callback));
++    } else {
++      const std::string* value = arguments.FindString("value");
++      if (!value) {
++        value = arguments.FindString("text");
++      }
++      if (!value) {
++        SendToolError(session_id, tool_call_id,
++                      "browser.fill requires value or text.");
++        return;
++      }
++      control->Fill(std::move(ref), *value, std::move(callback));
++    }
++    return;
++  }
++
++  if (tool_name == "browser.mark_credential_injection") {
++    mojom::FrameRefPtr frame = ParseFrameRefArg(arguments);
++    if (!frame) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.mark_credential_injection requires frame.");
++      return;
++    }
++    control->MarkCredentialInjection(
++        std::move(frame),
++        base::BindOnce(action_done, weak_factory_.GetWeakPtr(), session_id,
++                       tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.list_credentials") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    const std::string* origin = arguments.FindString("origin");
++    if (!tab_id || !origin) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.list_credentials requires tab_id and origin.");
++      return;
++    }
++    control->ListCredentials(
++        *tab_id, url::Origin::Create(GURL(*origin)),
++        base::BindOnce(
++            [](base::WeakPtr<SteadBrainService> service,
++               std::string session_id, std::string tool_call_id,
++               mojom::ReadResultPtr result,
++               std::vector<mojom::CredentialRefPtr> credentials) {
++              if (!service) {
++                return;
++              }
++              if (!result) {
++                service->SendToolError(session_id, tool_call_id,
++                                       "ListCredentials returned no result.");
++                return;
++              }
++              base::ListValue list;
++              for (const mojom::CredentialRefPtr& credential : credentials) {
++                if (credential) {
++                  list.Append(CredentialRefToDict(*credential));
++                }
++              }
++              base::DictValue content;
++              content.Set("result", ReadResultToDict(*result));
++              content.Set("credentials", std::move(list));
++              std::optional<std::string> error;
++              if (!result->ok) {
++                error = result->message;
++              }
++              service->SendToolResult(session_id, tool_call_id, result->ok,
++                                      std::move(content), std::move(error),
++                                      /*tainted=*/false);
++            },
++            weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.fill_credential") {
++    const base::DictValue* credential_dict = arguments.FindDict("credential");
++    const base::DictValue* username_dict =
++        arguments.FindDict("username_field");
++    const base::DictValue* password_dict =
++        arguments.FindDict("password_field");
++    mojom::CredentialRefPtr credential =
++        credential_dict ? ParseCredentialRef(*credential_dict) : nullptr;
++    mojom::NodeRefPtr username =
++        username_dict ? ParseNodeRef(*username_dict) : nullptr;
++    mojom::NodeRefPtr password =
++        password_dict ? ParseNodeRef(*password_dict) : nullptr;
++    if (!credential || !username || !password) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.fill_credential requires credential, "
++                    "username_field, and password_field.");
++      return;
++    }
++    control->FillCredential(
++        std::move(credential), std::move(username), std::move(password),
++        base::BindOnce(action_done, weak_factory_.GetWeakPtr(), session_id,
++                       tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.fill_totp") {
++    const base::DictValue* credential_dict = arguments.FindDict("credential");
++    mojom::CredentialRefPtr credential =
++        credential_dict ? ParseCredentialRef(*credential_dict) : nullptr;
++    const base::DictValue* field_dict = arguments.FindDict("field");
++    mojom::NodeRefPtr field =
++        field_dict ? ParseNodeRef(*field_dict) : ParseNodeRefArg(arguments);
++    if (!credential || !field) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.fill_totp requires credential and field ref.");
++      return;
++    }
++    control->FillTotp(std::move(credential), std::move(field),
++                      base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
++                                     session_id, tool_call_id));
++    return;
++  }
++
++  SendToolUnavailableResult(session_id, tool_call_id, tool_name);
++}
++
++void SteadBrainService::SendToolResult(
++    const std::string& session_id,
++    const std::string& tool_call_id,
++    bool ok,
++    base::DictValue content,
++    std::optional<std::string> error,
++    bool tainted) {
++  base::DictValue request = MakeRequest("tool_result", NextRequestId());
++  request.Set("session_id", session_id);
++  request.Set("tool_call_id", tool_call_id);
++  base::DictValue result;
++  result.Set("ok", ok);
++  result.Set("content", std::move(content));
++  if (error) {
++    result.Set("error", *error);
++  }
++  result.Set("tainted", tainted);
++  request.Set("result", std::move(result));
++  SendRequest(std::move(request));
++}
++
++void SteadBrainService::SendToolError(const std::string& session_id,
++                                      const std::string& tool_call_id,
++                                      std::string message) {
++  SendToolResult(session_id, tool_call_id, false, EmptyDict(),
++                 std::move(message), /*tainted=*/false);
++}
++
++void SteadBrainService::SendToolUnavailableResult(
++    const std::string& session_id,
++    const std::string& tool_call_id,
++    const std::string& tool_name) {
++  SendToolError(session_id, tool_call_id,
++                base::StrCat({"Browser tool is not wired yet: ", tool_name}));
++}
++
++std::string SteadBrainService::UserPromptKey(
++    const std::string& session_id,
++    const std::string& tool_call_id) const {
++  return base::StrCat({session_id, ":", tool_call_id});
++}
++
++}  // namespace stead
+diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
+index c90440a..dc14ac8 100644
+--- a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
++++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
+@@ -10,2 +10,3 @@
+ #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
++#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"
+ #include "chrome/common/webui_url_constants.h"
+@@ -57,3 +58,9 @@ void SteadSidebarUI::BindInterface(
+ }
+ 
++void SteadSidebarUI::BindInterface(
++    mojo::PendingReceiver<stead::mojom::BrainConsole> receiver) {
++  stead::SteadBrainServiceFactory::BindBrainConsole(
++      Profile::FromWebUI(web_ui()), std::move(receiver));
++}
++
+ WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)
+diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
+index c3bde7b..38db828 100644
+--- a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
++++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
+@@ -9,2 +9,3 @@
+ #include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
++#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
+ #include "chrome/browser/ui/webui/top_chrome/top_chrome_web_ui_controller.h"
+@@ -46,3 +47,5 @@ class SteadSidebarUI : public TopChromeWebUIController {
+   void BindInterface(
+       mojo::PendingReceiver<stead::mojom::ControlConsole> receiver);
++  void BindInterface(
++      mojo::PendingReceiver<stead::mojom::BrainConsole> receiver);
+ 
+diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
+index ddebcd9..956b618 100644
+--- a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
++++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
+@@ -10,2 +10,3 @@
+ #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
++#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"
+ #include "chrome/common/webui_url_constants.h"
+@@ -58,3 +59,9 @@ void SteadChatUI::BindInterface(
+ }
+ 
++void SteadChatUI::BindInterface(
++    mojo::PendingReceiver<stead::mojom::BrainConsole> receiver) {
++  stead::SteadBrainServiceFactory::BindBrainConsole(
++      Profile::FromWebUI(web_ui()), std::move(receiver));
++}
++
+ WEB_UI_CONTROLLER_TYPE_IMPL(SteadChatUI)
+diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h
+index 920a0f1..798c974 100644
+--- a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h
++++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h
+@@ -7,2 +7,3 @@
+ #include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
++#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
+ #include "chrome/common/webui_url_constants.h"
+@@ -37,3 +38,5 @@ class SteadChatUI : public ui::MojoWebUIController {
+   void BindInterface(
+       mojo::PendingReceiver<stead::mojom::ControlConsole> receiver);
++  void BindInterface(
++      mojo::PendingReceiver<stead::mojom::BrainConsole> receiver);
+ 
+diff --git a/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc
+index e5f0edc..6c1bb16 100644
+--- a/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc
++++ b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc
+@@ -10,2 +10,3 @@
+ #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
++#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"
+ #include "chrome/common/webui_url_constants.h"
+@@ -55,3 +56,9 @@ void SteadNewTabUI::BindInterface(
+ }
+ 
++void SteadNewTabUI::BindInterface(
++    mojo::PendingReceiver<stead::mojom::BrainConsole> receiver) {
++  stead::SteadBrainServiceFactory::BindBrainConsole(
++      Profile::FromWebUI(web_ui()), std::move(receiver));
++}
++
+ WEB_UI_CONTROLLER_TYPE_IMPL(SteadNewTabUI)
+diff --git a/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h
+index 5f722cc..4187c3c 100644
+--- a/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h
++++ b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h
+@@ -7,2 +7,3 @@
+ #include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
++#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
+ #include "chrome/common/webui_url_constants.h"
+@@ -37,3 +38,5 @@ class SteadNewTabUI : public ui::MojoWebUIController {
+   void BindInterface(
+       mojo::PendingReceiver<stead::mojom::ControlConsole> receiver);
++  void BindInterface(
++      mojo::PendingReceiver<stead::mojom::BrainConsole> receiver);
+ 
