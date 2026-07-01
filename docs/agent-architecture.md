@@ -550,6 +550,14 @@ this is verified against its live on-disk layout):
   are installed for a turn, the current chat id is supplied automatically for
   `session_tmp` / `session_artifacts`; models do not need to manually thread a
   `session_id` for normal artifact creation.
+- **Working folder and file modes** — the current chat session directory is
+  always the agent's working folder. Bare relative paths resolve inside that
+  session directory, so `tmp/foo.py` and `artifacts/report.docx` are ordinary
+  file-tool paths. Default file access is **session-only**: no Downloads shortcut,
+  no arbitrary absolute paths, and `attachments/` is read-only. Approved folders
+  require an explicit `approved_roots` mode; full-computer access requires an
+  explicit `full_disk` mode. Both modes keep the session directory as the working
+  folder and continue to canonicalize paths and reject escapes.
 
 Ties to the rest:
 - **§14 surfaces are views into `sessions/`** — `SessionSelector` and the new-tab
