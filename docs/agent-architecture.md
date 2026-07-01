@@ -142,7 +142,10 @@ closed. Iframe/OOPIF coordinate-space ambiguity should not make the probe report
 a false miss. Cheap because it's targeted, not a full-page walk.
 
 **Tier 3 — screenshot + vision (Computer Use):** last resort for AX-opaque
-custom widgets. (`Screenshot` op, optionally annotated with refs.)
+custom widgets. (`Screenshot` op, optionally annotated with refs.) Browser-side
+screenshots stay taint-gated and capped; the brain protocol may forward a small
+PNG as a Pie image tool-result block, while oversized images are omitted with
+metadata instead of being streamed as unbounded JSON/base64 text.
 
 ---
 
@@ -254,9 +257,17 @@ The surface that *approves* a permission must not be able to *drive* the page.
 So the raw primitives are **private**, and everyone talks to a **broker**:
 
 ```
-  WebUI ──ControlConsole──┐                         brain ──AgentControl──┐
-  (approve / audit /      │                         (gated page-driving)  │
-   sessions; NO driving)  ▼                                               ▼
+  WebUI ──BrainConsole────┐                         brain ──AgentControl──┐
+  (chat / sessions /      │                         (gated page-driving)  │
+   provider auth)         ▼                                               ▼
+              ┌──────────── BrainBroker (browser process) ──────────────────┐
+              │  launches bundled stead-brain · framed JSON stdio · streams │
+              │  session/model events · mediates tool calls                  │
+              └───────────────────────────┬──────────────────────────────────┘
+                                          │
+  WebUI ──ControlConsole──┐              │
+  (approve / audit /      │              │
+   cancel; NO driving)    ▼              ▼
               ┌──────────── ControlBroker (browser process) ─────────────────┐
               │  action-class · confirmation gates · redaction · audit log ·  │
               │  cancel/interrupt · scoped capabilities                       │
@@ -273,14 +284,18 @@ So the raw primitives are **private**, and everyone talks to a **broker**:
 - **`AgentControl`** (brain ↔ broker) — gated page-driving. Every call is
   classified → gated → redacted → audited → cancellable before it reaches
   `BrowserControl`.
-- **`ControlConsole`** (WebUI ↔ broker) — approve/deny, audit, sessions,
+- **`ControlConsole`** (WebUI ↔ broker) — approve/deny, audit,
   cancel; subscribe to events *to display*. **No `Click`/`Fill`/`Eval`** — the
   WebUI structurally cannot drive the page.
+- **`BrainConsole`** (WebUI ↔ BrainBroker) — create/load sessions, send/cancel
+  turns, list the Pie-backed model catalog, list provider auth, start
+  Anthropic/Codex OAuth, import Codex auth, and subscribe to streamed brain
+  events. **No `AgentControl` binding**.
 
 Implementation wiring: the Stead WebUI controllers (sidebar, full-page chat,
-new-tab) register only `ControlConsole` with Chromium's WebUI binder map /
-broker registry. `AgentControl` is not registered for WebUI; it is the
-brain-side broker surface.
+new-tab) register `ControlConsole` and `BrainConsole` with Chromium's WebUI
+binder map / broker registry. `AgentControl` is not registered for WebUI; it is
+the brain-side browser-control surface.
 
 ```
 struct FrameRef { int32 tab_id; string frame_token; uint32 snapshot_generation; };
@@ -374,13 +389,31 @@ interface AgentControl {
   AddObserver(pending_remote<ControlObserver> observer);     // events for the agent
 };
 
-// WebUI-facing: approval / audit / sessions — NO page driving.
+// WebUI-facing: approval / audit / cancellation — NO page driving.
 interface ControlConsole {
   RespondToConfirmation(int32 action_id, bool approve);
   GetAuditLog(...) => (array<AuditEntry> entries);
   Cancel(int32 tab_id);                                       // interrupt the agent
-  ListSessions() => (array<SessionInfo> s); SelectSession(string id);
   AddObserver(pending_remote<ConsoleObserver> observer);      // confirmations + status to render
+};
+
+// WebUI-facing: brain sessions / provider auth / chat — NO page driving.
+interface BrainConsole {
+  Initialize() => (BrainResult r);
+  CreateSession(string? title, string origin_surface) => (BrainResult r);
+  ListSessions() => (BrainResult r);
+  LoadSession(string session_id) => (BrainResult r);
+  SendMessage(string session_id, string text, BrainTabContext? tab_context,
+              BrainModelSelection? model) => (BrainResult r);
+  CancelTurn(string session_id) => (BrainResult r);
+  ListModels() => (BrainResult r);        // Pie registry + auth capabilities
+  ListProviderAuth() => (BrainResult r);
+  StartProviderOAuth(string provider) => (BrainResult r);
+  ImportCodexAuth(string? path) => (BrainResult r);
+  SetProviderApiKey(string provider, string api_key) => (BrainResult r);
+  RespondToUserPrompt(string session_id, string tool_call_id,
+                      string response_json, bool cancelled) => (BrainResult r);
+  AddObserver(pending_remote<BrainObserver> observer);
 };
 ```
 
@@ -439,16 +472,50 @@ sessions at all.
 
 ---
 
-## 13. The brain (decide *after* the substrate)
+## 13. The brain (v1 runtime)
 
-- **Lineage:** Pi `agent` + pi-ai. De-risked — Aside proves it works for exactly
-  this. So validate the substrate with a *throwaway* brain (stock Pi / `claude -p`)
-  first; build the production brain later.
-- **Runtime decision:** bundle Pi (Node, rides upstream updates, ~140 MB
-  always-on) **vs** Rust port (~couple MB, but you fork & maintain Pi — esp. the
-  fragile OAuth). Agent-native ⇒ footprint argues for the port, eventually.
-- **Process model:** **utility process** (sandboxed; default). In-process Rust
-  only to chase the last MB (a misbehaving loop then risks the browser).
+V1 is a **bundled Rust helper**, not in-process browser Rust and not a
+user-managed daemon:
+
+```
+Stead WebUI ──BrainConsole──► Browser BrainBroker
+Browser BrainBroker ◄──framed JSON stdio──► bundled stead-brain
+stead-brain ──Pie agent/core + pie-ai──► providers
+stead-brain tool calls ──JSON──► BrainBroker ──AgentControl──► ControlBroker
+```
+
+- **Lineage:** `c4pt0r/pie` provides the agent loop/runtime base. Stead vendors a
+  pinned Pie copy under `../brain/vendor/pie` and builds a product helper around
+  `crates/agent`/`crates/ai` concepts, not Pi's coding-agent shell.
+- **Process model:** the browser owns the helper lifecycle. Lazy-start on first
+  chat/auth use, keep warm per profile, kill on profile shutdown, restart on
+  crash. It is "baked in" because the binary ships inside `Stead.app`; there is
+  no separate install, extension, Node daemon, or user-managed service.
+- **Protocol:** newline-delimited JSON over stdio for V1. Every message carries
+  `protocol_version` and `request_id`; streamed brain events are forwarded to
+  WebUI over `BrainConsole`.
+- **Provider auth:** `pie-ai` provider streaming is used directly. Anthropic
+  OAuth goes through Pie's PKCE helper; OpenAI Codex OAuth uses the Codex-compatible
+  PKCE flow and can import `~/.codex/auth.json`. Provider credentials are stored
+  in macOS Keychain by default; JSON file storage is only an explicit dev/test
+  fallback and legacy migration source.
+- **Model catalog:** the WebUI does not hardcode provider/model lists. It calls
+  `BrainConsole.ListModels()`, which forwards `list_models` to the bundled helper;
+  the helper returns a catalog derived from Pie's compiled `list_models()` registry
+  plus auth capabilities/status for the product-supported providers.
+- **Tool boundary:** the helper never opens Mojo. Browser/page tools are requested
+  as JSON tool calls and must be fulfilled by the browser-side `BrainBroker`
+  through `AgentControl`.
+- **Skills:** the helper loads Pie-style markdown skills from
+  `agents/main/skills` into Pie's native skill catalog and exposes the matching
+  `Skill` invocation tool. Stead also compiles in an initial browser-native skill
+  library for credential handoff, Gmail, GitHub, Notion, and artifact creation;
+  user-authored skills can override a bundled skill by name.
+- **Memory:** the helper owns `agents/main/memory` and exposes a single Pie-style
+  `memory` tool with `save/list/read/search/forget` actions. Memory is for
+  durable, non-secret user/project facts only; provider secrets, credentials,
+  cookies, TOTP codes, payment data, and tainted browser-control payloads are
+  forbidden and remain outside transcripts/memory.
 
 ### Session persistence (on-disk) — §14's "shared store," made concrete
 
@@ -458,10 +525,12 @@ this is verified against its live on-disk layout):
 ```
 <root>/u/<id>/agents/main/             # agent home
   AGENTS.md   SOUL.md                  # instructions + persona
-  memory/                              # persistent agent memory
+  memory/                              # persistent non-secret agent memory
   skills/                              # the skills library (§15)
   sessions/<YYYY-MM-DD>_<rand>/        # ONE dir per chat
     messages.jsonl                     # append-only transcript
+    attachments/                       # user-provided inputs for THIS chat
+    tmp/                               # scratch files for THIS chat
     artifacts/                         # files the agent created in THIS chat
     meta.json                          # title, created/updated, origin surface, tab ctx
 ```
@@ -477,6 +546,10 @@ this is verified against its live on-disk layout):
   `sessions/` by `meta.json`.
 - **`artifacts/`** — the default landing spot for the agent's `write_file`;
   scoped to the conversation, travels with it, browsable from the UI.
+- **`tmp/` / `artifacts/` tool ergonomics** — when the Pie-facing file tools
+  are installed for a turn, the current chat id is supplied automatically for
+  `session_tmp` / `session_artifacts`; models do not need to manually thread a
+  `session_id` for normal artifact creation.
 
 Ties to the rest:
 - **§14 surfaces are views into `sessions/`** — `SessionSelector` and the new-tab
@@ -658,6 +731,12 @@ The password-manager skills are the canonical instance of the **skills layer**:
 - The point: thin procedural knowledge that lets the *one* universal control layer
   operate any tool — native or third-party — on your behalf.
 
+Implementation status: the Rust brain ships initial bundled Pie-style skills for
+credential handoff, Gmail, GitHub, Notion, and artifact creation; it also loads
+user-authored `SKILL.md` files from `agents/main/skills` and adds the combined
+catalog + `Skill` invocation tool to each harness run. User skills override
+bundled skills by name.
+
 ### Sync (deferred, optional)
 
 Local-first day one (OS keychain). Later, an **E2EE cloud sync** (zero-knowledge,
@@ -713,7 +792,9 @@ matches the source frame, not the tab's current main frame.
    exists from the very first action (no raw primitives without the broker, §12).
 2. **Fixture suite** (§16) — the correctness bar.
 3. **Tiny JS REPL dialect** over the primitives (§10).
-4. **Only then** decide the brain: Pi-as-Node / Rust port / hybrid.
+4. **BrainBroker + bundled Rust helper** — `BrainConsole` for WebUI sessions/auth,
+   framed JSON stdio to `stead-brain`, and tool-call routing through
+   `AgentControl`.
 
 (Build-gated from step 1 — this is where the Mac build box earns its keep. The
 design above is pinned to real 149 APIs so the build day is execution.)
@@ -773,7 +854,7 @@ framework helper (`.value=`+`dispatchEvent`, `execCommand('insertText')`,
 
 | Bucket | Tools | Provided by |
 |---|---|---|
-| **Harness** | `bash`, files, `WebSearch`/`WebFetch`, `write_todos`, `subagent`, `memory_search`, `ask_user`, `get_time`, `notification` | the agent **core** (Pi / Rust port) |
+| **Harness** | scoped `files.*`, `memory`, `Skill`, `get_time`, `ask_user`, `notification`, credentialless capped `WebFetch`; deferred: `WebSearch`; excluded from v1: shell/subagents | bundled Rust brain on Pie agent core |
 | **Browser-native** ⭐ | the REPL dialect, AX snapshot, tabs (open/close/list/adopt), `browsing_history_search`, screenshots, fetch-with-cookies, `pdf`, structured events | **#1 — the moat (`BrowserControl`)** |
 | **Skills** | Gmail, Notion, Slack, GitHub, 1Password… | later, on top of browser-native |
 

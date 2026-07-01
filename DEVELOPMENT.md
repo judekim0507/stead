@@ -3,9 +3,9 @@
 Two folders, each with one job, connected by one script. That's the whole thing.
 
 ```
-  ../ui                  ── sync script ──>   stead (this repo)        ── launches ──>   brain
-  the LOOK                copies built UI       the BROWSER                                the agent (Pi)
-  SvelteKit app           into this repo        Chromium fork + patches                   separate process (later)
+  ../ui                  ── sync script ──>   stead (this repo)        ── launches ──>   ../brain
+  the LOOK                copies built UI       the BROWSER                                the agent helper
+  SvelteKit app           into this repo        Chromium fork + patches                   bundled Rust + Pie
 ```
 
 ## Repos
@@ -22,7 +22,7 @@ the *source*. Edit source in `stead-ui`, then sync (below) to bring the build he
 | ------------------------------------------------------- | ------------------------ | ------------------------------------ |
 | How the **UI** looks/works (chat, sidebar, new-tab)     | **`../ui`** (Svelte)     | `bun dev` — instant, in any browser  |
 | **Browser-level** stuff (new page surface, native, brain wiring) | **this repo** (`patches/stead/…`) | a Stead build               |
-| The **brain** (the agent itself)                        | its own thing (Pi, later)| runs as a side process               |
+| The **brain** (the agent itself)                        | **`../brain`** (Rust + Pie)| runs as a bundled helper process   |
 
 You'll spend ~all your time in `../ui`. You rarely touch this repo for UI work.
 
@@ -81,8 +81,25 @@ The "Chrome/Chromium/Helium → Stead" rename is `devutils/stead_name_substituti
 run automatically by the build. The `helium-chromium` submodule stays untouched.
 You don't need to think about it.
 
-## The brain (later)
+## The brain
 
-A separate process (the Pi agent) that the browser launches and talks to. The UI
-talks to the browser; the browser talks to the brain. Wiring it touches *this*
-repo a little (the glue) — not your Svelte UI. It does not make the UI side messier.
+A bundled Rust helper process that the browser launches and talks to over framed
+JSON stdio. The UI talks to the browser; the browser talks to the brain. The
+brain source lives in `../brain`, vendors pinned Pie under `../brain/vendor/pie`,
+and keeps browser tools mediated through the browser-side broker.
+
+The Rust side is scaffolded and testable now:
+
+```sh
+cd ../brain
+cargo test --workspace
+cargo build --release -p stead-brain
+```
+
+The browser wiring now has a `BrainBroker`/`BrainConsole` Chromium patch that
+launches `stead-brain` and bridges WebUI session/auth calls to the helper. The
+patch also routes browser tool calls from `BrainBroker` back through
+`AgentControl`. `sign_and_package_app.sh` installs the release helper into
+`Stead.app/Contents/MacOS/stead-brain` before signing, so the helper is bundled
+with the app; the remaining browser work is verifying the launch/routing path in
+a Chromium build.
