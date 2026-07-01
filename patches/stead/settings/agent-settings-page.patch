@@ -1,0 +1,375 @@
+diff --git a/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc b/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc
+index cd4506fd0c12..2f3a7a0508cc 100644
+--- a/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc
++++ b/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc
+@@ -449,8 +449,9 @@ void PopulateChromeWebUIFrameBindersPartsDesktop(
+                                          SteadSidebarUI, SteadChatUI,
+                                          SteadNewTabUI>(map);
+   RegisterWebUIControllerInterfaceBinder<stead::mojom::BrainConsole,
+                                          SteadSidebarUI, SteadChatUI,
+-                                         SteadNewTabUI>(map);
++                                         SteadNewTabUI,
++                                         settings::SettingsUI>(map);
+   RegisterWebUIControllerInterfaceBinder<
+       side_panel::mojom::BookmarksPageHandlerFactory, BookmarksSidePanelUI>(
+       map);
+@@ -680,7 +681,8 @@ void PopulateChromeWebUIFrameInterfaceBrokersTrustedPartsDesktop(
+ #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+       .Add<customize_color_scheme_mode::mojom::
+                CustomizeColorSchemeModeHandlerFactory>()
+-      .Add<help_bubble::mojom::HelpBubbleHandlerFactory>();
++      .Add<help_bubble::mojom::HelpBubbleHandlerFactory>()
++      .Add<stead::mojom::BrainConsole>();
+   registry.ForWebUI<SteadSidebarUI>().Add<stead::mojom::ControlConsole>();
+   registry.ForWebUI<SteadChatUI>().Add<stead::mojom::ControlConsole>();
+   registry.ForWebUI<SteadNewTabUI>().Add<stead::mojom::ControlConsole>();
+diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+index 57f6e5ddb6b28..99bdd80ce6b9c 100644
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -190,6 +190,7 @@ build_webui("build") {
+     "settings_page/settings_section.ts",
+     "settings_page/settings_subpage.ts",
+     "settings_ui/settings_ui.ts",
++    "stead_agent_page/stead_agent_page.ts",
+     "simple_confirmation_dialog.ts",
+     "site_favicon.ts",
+     "site_settings/add_site_dialog.ts",
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+index 9f00e5a2d3a2d..0badc8f602c7e 100644
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -195,6 +195,10 @@ function createRoutes(): SettingsRoutes {
+     r.SYNC_ADVANCED = r.SYNC.createChild('/syncSetup/advanced');
+   }
+ 
++  r.STEAD_AGENT = r.BASIC.createSection(
++      '/agent', 'steadAgent',
++      loadTimeData.getString('steadAgentPageTitle'));
++
+   if (visibility.ai !== false && loadTimeData.getBoolean('showAiPage')) {
+     r.AI = r.BASIC.createSection(
+         '/ai', 'ai', loadTimeData.getString('aiInnovationsPageTitle'));
+diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
+index 3ab3144d6e3cf..9fd44a1feec94 100644
+--- a/chrome/browser/resources/settings/router.ts
++++ b/chrome/browser/resources/settings/router.ts
+@@ -111,7 +111,8 @@ export interface SettingsRoutes {
+   SITE_SETTINGS_WEB_PRINTING: Route;
+   SPELL_CHECK: Route;
+   SYNC: Route;
+   SYNC_ADVANCED: Route;
++  STEAD_AGENT: Route;
+   SYSTEM: Route;
+   TRIGGERED_RESET_DIALOG: Route;
+   YOUR_SAVED_INFO: Route;
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
+index 6de356c61a757..9001c3db0e640 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -73,6 +73,15 @@
+     </div>
+   </template>
+ 
++  <div slot="view" id="steadAgent">
++    <template is="dom-if" if="[[renderPlugin_(
++        routes_.STEAD_AGENT, lastRoute_, inSearchMode_)]]">
++      <settings-stead-agent-page prefs="{{prefs}}"
++          in-search-mode="[[inSearchMode_]]">
++      </settings-stead-agent-page>
++    </template>
++  </div>
++
+   <template is="dom-if" if="[[showPage_(pageVisibility_.privacy)]]">
+     <div slot="view" id="privacy">
+       <template is="dom-if" if="[[renderPlugin_(
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
+index c140544ac3d43..bb312db760f32 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.ts
++++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
+@@ -20,5 +20,6 @@ import '../reset_page/reset_profile_banner.js';
+ import '../search_page/search_page_index.js';
+ import '../your_saved_info_page/your_saved_info_page_index.js';
++import '../stead_agent_page/stead_agent_page.js';
+ // <if expr="not is_chromeos">
+ import '../default_browser_page/default_browser_page.js';
+ 
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+index 9782b120c3c67..b9ed283591dec 100644
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+@@ -53,6 +53,12 @@
+           $i18n{peoplePageTitle}
+           <cr-ripple></cr-ripple>
+         </a>
++        <a role="menuitem" id="steadAgent" href="/agent"
++            class="cr-nav-menu-item">
++          <cr-icon icon="settings20:magic"></cr-icon>
++          $i18n{steadAgentPageTitle}
++          <cr-ripple></cr-ripple>
++        </a>
+         <a role="menuitem" id="autofill" href="/autofill"
+             on-click="onAutofillClick_"
+             class="cr-nav-menu-item"
+diff --git a/chrome/browser/resources/settings/stead_agent_page/stead_agent_page.html b/chrome/browser/resources/settings/stead_agent_page/stead_agent_page.html
+new file mode 100644
+index 0000000000000..365d529e2165d
+--- /dev/null
++++ b/chrome/browser/resources/settings/stead_agent_page/stead_agent_page.html
+@@ -0,0 +1,92 @@
++  <style include="cr-shared-style settings-shared">
++    .summary {
++      color: var(--cr-secondary-text-color);
++      line-height: 20px;
++      padding: 0 var(--cr-section-padding) 16px;
++    }
++
++    .status {
++      color: var(--cr-secondary-text-color);
++      font-size: 12px;
++      line-height: 20px;
++      margin-inline-start: 16px;
++      white-space: nowrap;
++    }
++
++    .section-label {
++      color: var(--cr-secondary-text-color);
++      font-size: 12px;
++      font-weight: 500;
++      letter-spacing: .3px;
++      padding: 18px var(--cr-section-padding) 8px;
++      text-transform: uppercase;
++    }
++  </style>
++  <settings-section page-title="$i18n{steadAgentPageTitle}"
++      class="cr-centered-card-container">
++    <div class="summary">
++      $i18n{steadAgentSummary}
++    </div>
++
++    <div class="section-label">$i18n{steadAgentBrainSectionTitle}</div>
++    <div class="cr-row first">
++      <div class="flex cr-padded-text">
++        <div>$i18n{steadAgentProvidersTitle}</div>
++        <div class="secondary">$i18n{steadAgentProvidersSubtitle}</div>
++      </div>
++      <div class="separator"></div>
++      <div class="status">$i18n{steadAgentStatusNotConfigured}</div>
++    </div>
++    <div class="cr-row">
++      <div class="flex cr-padded-text">
++        <div>$i18n{steadAgentModelsTitle}</div>
++        <div class="secondary">$i18n{steadAgentModelsSubtitle}</div>
++      </div>
++      <div class="separator"></div>
++      <div class="status">$i18n{steadAgentStatusRuntime}</div>
++    </div>
++    <div class="cr-row">
++      <div class="flex cr-padded-text">
++        <div>$i18n{steadAgentSkillsTitle}</div>
++        <div class="secondary">$i18n{steadAgentSkillsSubtitle}</div>
++      </div>
++      <div class="separator"></div>
++      <div class="status">$i18n{steadAgentStatusPlanned}</div>
++    </div>
++
++    <div class="section-label">$i18n{steadAgentSafetySectionTitle}</div>
++    <div class="cr-row">
++      <div class="flex cr-padded-text">
++        <div>$i18n{steadAgentBrowserControlTitle}</div>
++        <div class="secondary">$i18n{steadAgentBrowserControlSubtitle}</div>
++      </div>
++      <div class="separator"></div>
++      <div class="status">$i18n{steadAgentStatusBrokered}</div>
++    </div>
++    <div class="cr-row">
++      <div class="flex cr-padded-text">
++        <div>$i18n{steadAgentPasswordsTitle}</div>
++        <div class="secondary">$i18n{steadAgentPasswordsSubtitle}</div>
++      </div>
++      <div class="separator"></div>
++      <div class="status">$i18n{steadAgentStatusBrokered}</div>
++    </div>
++    <div class="cr-row">
++      <div class="flex cr-padded-text">
++        <div>$i18n{steadAgentFileAccessTitle}</div>
++        <div class="secondary">$i18n{steadAgentFileAccessSubtitle}</div>
++      </div>
++      <div class="separator"></div>
++      <div class="status">$i18n{steadAgentStatusSessionScoped}</div>
++    </div>
++
++    <div class="section-label">$i18n{steadAgentDataSectionTitle}</div>
++    <div class="cr-row">
++      <div class="flex cr-padded-text">
++        <div>$i18n{steadAgentSessionsTitle}</div>
++        <div class="secondary">$i18n{steadAgentSessionsSubtitle}</div>
++      </div>
++      <div class="separator"></div>
++      <div class="status">$i18n{steadAgentStatusLocal}</div>
++    </div>
++  </settings-section>
+diff --git a/chrome/browser/resources/settings/stead_agent_page/stead_agent_page.ts b/chrome/browser/resources/settings/stead_agent_page/stead_agent_page.ts
+new file mode 100644
+index 0000000000000..56da5cba1089a
+--- /dev/null
++++ b/chrome/browser/resources/settings/stead_agent_page/stead_agent_page.ts
+@@ -0,0 +1,55 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview 'settings-stead-agent-page' contains Stead's built-in agent
++ * settings.
++ */
++import 'chrome://resources/cr_elements/cr_shared_style.css.js';
++import '../settings_page/settings_section.js';
++import '../settings_shared.css.js';
++
++import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
++
++import {getSearchManager} from '../search_settings.js';
++import type {SettingsPlugin} from '../settings_main/settings_plugin.js';
++
++import {getTemplate} from './stead_agent_page.html.js';
++
++export class SettingsSteadAgentPageElement extends PolymerElement implements
++    SettingsPlugin {
++  static get is() {
++    return 'settings-stead-agent-page';
++  }
++
++  static get template() {
++    return getTemplate();
++  }
++
++  static get properties() {
++    return {
++      prefs: {
++        type: Object,
++        notify: true,
++      },
++    };
++  }
++
++  declare prefs: {[key: string]: any};
++
++  // SettingsPlugin implementation.
++  async searchContents(query: string) {
++    const searchRequest = await getSearchManager().search(query, this);
++    return searchRequest.getSearchResult();
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-stead-agent-page': SettingsSteadAgentPageElement;
++  }
++}
++
++customElements.define(
++    SettingsSteadAgentPageElement.is, SettingsSteadAgentPageElement);
+diff --git a/chrome/browser/ui/webui/settings/settings_ui.cc b/chrome/browser/ui/webui/settings/settings_ui.cc
+index 91f20809e30a1..e35f8a1fdfefe 100644
+--- a/chrome/browser/ui/webui/settings/settings_ui.cc
++++ b/chrome/browser/ui/webui/settings/settings_ui.cc
+@@ -47,6 +47,7 @@
+ #include "chrome/browser/ui/hats/hats_service.h"
+ #include "chrome/browser/ui/hats/hats_service_factory.h"
+ #include "chrome/browser/ui/managed_ui.h"
++#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"
+ #include "chrome/browser/ui/passwords/ui_utils.h"
+ #include "chrome/browser/ui/toasts/toast_features.h"
+ #include "chrome/browser/ui/ui_features.h"
+@@ -235,6 +236,54 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
+   html_source->OverrideContentSecurityPolicy(
+       network::mojom::CSPDirectiveName::WorkerSrc,
+       "worker-src blob: chrome://resources 'self';");
++
++  html_source->AddString("steadAgentPageTitle", "Agent");
++  html_source->AddString(
++      "steadAgentSummary",
++      "Configure the built-in browser agent. The helper is bundled with "
++      "Stead and talks to browser tools through the broker.");
++  html_source->AddString("steadAgentBrainSectionTitle", "Brain");
++  html_source->AddString("steadAgentSafetySectionTitle", "Safety");
++  html_source->AddString("steadAgentDataSectionTitle", "Data");
++  html_source->AddString("steadAgentProvidersTitle", "Providers & OAuth");
++  html_source->AddString(
++      "steadAgentProvidersSubtitle",
++      "Set up model providers, account authorization, and provider keys.");
++  html_source->AddString("steadAgentModelsTitle", "Model defaults");
++  html_source->AddString(
++      "steadAgentModelsSubtitle",
++      "Choose the default model and fallback policy for new chats.");
++  html_source->AddString("steadAgentSkillsTitle", "Skills");
++  html_source->AddString(
++      "steadAgentSkillsSubtitle",
++      "Manage local skills the brain can load for specialized work.");
++  html_source->AddString("steadAgentBrowserControlTitle", "Browser control");
++  html_source->AddString(
++      "steadAgentBrowserControlSubtitle",
++      "Page actions route through the native control broker with audit, "
++      "confirmation, cancellation, and taint checks.");
++  html_source->AddString("steadAgentPasswordsTitle", "Stead Vault");
++  html_source->AddString(
++      "steadAgentPasswordsSubtitle",
++      "The agent can use saved browser passwords in normal modes. "
++      "Ask-for-approval mode requires confirmation; secrets are never shown "
++      "to the model.");
++  html_source->AddString("steadAgentFileAccessTitle", "File access");
++  html_source->AddString(
++      "steadAgentFileAccessSubtitle",
++      "Chats start in a private session folder. Full-disk access requires the "
++      "full-access mode.");
++  html_source->AddString("steadAgentSessionsTitle", "Sessions & memory");
++  html_source->AddString(
++      "steadAgentSessionsSubtitle",
++      "Chats, memory, and artifacts are stored locally under Stead's app "
++      "support directory.");
++  html_source->AddString("steadAgentStatusNotConfigured", "Not configured");
++  html_source->AddString("steadAgentStatusRuntime", "Runtime");
++  html_source->AddString("steadAgentStatusPlanned", "Planned");
++  html_source->AddString("steadAgentStatusBrokered", "Brokered");
++  html_source->AddString("steadAgentStatusSessionScoped", "Session scoped");
++  html_source->AddString("steadAgentStatusLocal", "Local");
+ 
+   AddSettingsPageUIHandler(std::make_unique<AppearanceHandler>(web_ui));
+ 
+@@ -782,6 +831,12 @@ void SettingsUI::BindInterface(
+   help_bubble_handler_factory_receiver_.Bind(std::move(pending_receiver));
+ }
+ 
++void SettingsUI::BindInterface(
++    mojo::PendingReceiver<stead::mojom::BrainConsole> pending_receiver) {
++  stead::SteadBrainServiceFactory::BindBrainConsole(
++      Profile::FromWebUI(web_ui()), std::move(pending_receiver));
++}
++
+ void SettingsUI::AddSettingsPageUIHandler(
+     std::unique_ptr<content::WebUIMessageHandler> handler) {
+   DCHECK(handler);
+diff --git a/chrome/browser/ui/webui/settings/settings_ui.h b/chrome/browser/ui/webui/settings/settings_ui.h
+index 8d97615464039..a5fc89029aa69 100644
+--- a/chrome/browser/ui/webui/settings/settings_ui.h
++++ b/chrome/browser/ui/webui/settings/settings_ui.h
+@@ -9,6 +9,7 @@
+ #include "base/callback_list.h"
+ #include "build/build_config.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
+ #include "chrome/common/buildflags.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "components/user_education/webui/help_bubble_handler.h"
+@@ -112,7 +113,10 @@ class SettingsUI
+   void BindInterface(
+       mojo::PendingReceiver<customize_color_scheme_mode::mojom::
+                                 CustomizeColorSchemeModeHandlerFactory>
+           pending_receiver);
++
++  void BindInterface(
++      mojo::PendingReceiver<stead::mojom::BrainConsole> pending_receiver);
+ 
+  private:
+   void AddSettingsPageUIHandler(

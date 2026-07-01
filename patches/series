@@ -41,3 +41,4 @@ stead/newtab/newtab-ntp-redirect.patch
 
 stead/agent-control/native-control-layer.patch
 stead/brain/brain-broker.patch
+stead/settings/agent-settings-page.patch
