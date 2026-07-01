@@ -295,7 +295,7 @@ new file mode 100644
 index 0000000000000..4cbb02c943bdb
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/agent_control.mojom
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,348 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -406,9 +406,11 @@ index 0000000000000..4cbb02c943bdb
 +};
 +
 +struct CredentialRef {
-+  // Opaque Vault handle. It must not encode username, account metadata, or
-+  // secret material.
++  // Opaque Vault handle. It must not encode secret material.
 +  string handle;
++  // Account-selector label. Username/email is allowed here so the agent can
++  // choose between saved accounts; passwords, TOTP codes, cookies, payment
++  // data, and passkey private material are never allowed.
 +  string label;
 +  string source;
 +  bool has_totp;
@@ -787,7 +789,7 @@ new file mode 100644
 index 0000000000000..7a3e021c74dab
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
-@@ -0,0 +1,6279 @@
+@@ -0,0 +1,6285 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -5605,10 +5607,16 @@ index 0000000000000..7a3e021c74dab
 +      const std::string source = credential.source.empty()
 +                                     ? "stead_vault"
 +                                     : credential.source;
++      const std::string username =
++          SnapshotString(base::UTF16ToUTF8(credential.username_value));
++      const std::string label =
++          username.empty() ? "Account " + std::to_string(label_index)
++                           : username;
 +      const std::string handle = CacheCredential(std::move(credential));
 +      refs.push_back(mojom::CredentialRef::New(
-+          handle, "Account " + std::to_string(label_index++), source,
++          handle, label, source,
 +          /*has_totp=*/false, /*has_passkey=*/false));
++      ++label_index;
 +    }
 +    result = MakeReadResult(true, kCredentialsListed,
 +                            refs.empty() ? "No saved credentials found."
