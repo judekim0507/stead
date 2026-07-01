@@ -21,6 +21,10 @@ helium/macos/open-shortcuts-settings-action.patch
 helium/macos/native-translation-context-option.patch
 
 stead/branding/rebrand-to-stead.patch
+stead/branding/rebrand-password-manager-to-stead-vault.patch
+stead/branding/rebrand-password-generated-strings-to-stead-vault.patch
+stead/branding/rebrand-password-ui-remaining-strings-to-stead-vault.patch
+stead/branding/rebrand-password-generic-remaining-strings-to-stead-vault.patch
 
 stead/sidebar/stead-sidebar-webui-files.patch
 stead/sidebar/register-stead-sidebar.patch
