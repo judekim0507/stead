@@ -87,4 +87,4 @@ cd "$_src_dir"
 
 ninja -C out/Default chrome chromedriver
 
-"$_root_dir/sign_and_package_app.sh"
+STEAD_BUILD_ARCH="$_arch" "$_root_dir/sign_and_package_app.sh"

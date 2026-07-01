@@ -6,10 +6,13 @@ _root_dir="$(dirname "$(greadlink -f "$0")")"
 _chromium_version=$(cat "$_root_dir"/helium-chromium/chromium_version.txt)
 _ungoogled_revision=$(cat "$_root_dir"/helium-chromium/revision.txt)
 _package_revision=$(cat "$_root_dir"/revision.txt)
+_app_dir="$PWD/out/Default/Stead.app"
+
+"$_root_dir/resources/stead/install_brain_helper.sh" "$_app_dir" "${STEAD_BUILD_ARCH:-$(uname -m)}"
 
 # Fix issue where macOS requests permission for incoming network connections
 # See https://github.com/ungoogled-software/ungoogled-chromium-macos/issues/17
-xattr -cs out/Default/Stead.app
+xattr -cs "$_app_dir"
 
 if ! [ -z "${MACOS_CERTIFICATE_NAME-}" ]; then
   APP_ENTITLEMENTS="$_root_dir/entitlements/app-entitlements.plist"
@@ -34,6 +37,7 @@ if ! [ -z "${MACOS_CERTIFICATE_NAME-}" ]; then
   codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp --identifier com.steadbrowser.app.framework.AlertNotificationService --options restrict,library,runtime,kill out/Default/Stead.app/Contents/Frameworks/Stead\ Framework.framework/Helpers/Stead\ Helper\ \(Alerts\).app
   codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp --identifier app_mode_loader --options restrict,library,runtime,kill out/Default/Stead.app/Contents/Frameworks/Stead\ Framework.framework/Helpers/app_mode_loader
   codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp --identifier web_app_shortcut_copier --options restrict,library,runtime,kill out/Default/Stead.app/Contents/Frameworks/Stead\ Framework.framework/Helpers/web_app_shortcut_copier
+  codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp --identifier com.steadbrowser.app.stead-brain --options restrict,library,runtime,kill "$_app_dir/Contents/MacOS/stead-brain"
   codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp --identifier libEGL out/Default/Stead.app/Contents/Frameworks/Stead\ Framework.framework/Libraries/libEGL.dylib
   codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp --identifier libGLESv2 out/Default/Stead.app/Contents/Frameworks/Stead\ Framework.framework/Libraries/libGLESv2.dylib
   codesign --sign "$MACOS_CERTIFICATE_NAME" --force --timestamp --identifier libvk_swiftshader out/Default/Stead.app/Contents/Frameworks/Stead\ Framework.framework/Libraries/libvk_swiftshader.dylib
