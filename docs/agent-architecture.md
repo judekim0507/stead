@@ -358,6 +358,9 @@ struct CredentialRef { string handle; string label; string source; bool has_totp
 
 // brain-facing: gated page-driving. EVERY mutating call is action-shaped
 // (returns ActionResult = action_id + gate/audit). Mirrors the primitives, BROKERED.
+enum CredentialUsePolicy { Preauthorized, AskForApproval };
+enum BrainPermissionMode { Ask, Read, Full };
+
 interface AgentControl {
   GetSnapshot(int32 tab_id) => (Snapshot s);                 // Tier 1
   ProbeNode(NodeRef ref) => (ReadResult r, NodeProbe? p);    // Tier 2 (denied on tainted frames, §15)
@@ -382,9 +385,9 @@ interface AgentControl {
   ListTabs() => (array<TabInfo> tabs);                       // COARSE auth hint only (§14)
   Eval(FrameRef frame, string js) => (ActionResult r, string? json_result);  // HIGH-RISK: gated+audited (§12); null if denied/tainted (§15)
   // credentials — never-reveal; origin-scoped + intent-gated (§15)
-  ListCredentials(int32 tab_id, url.mojom.Origin origin) => (ReadResult r, array<CredentialRef> creds);  // opaque handles, NO secrets/usernames
-  FillCredential(CredentialRef cred, NodeRef username_field, NodeRef password_field) => (ActionResult r);  // credential-class; TAINTS frame
-  FillTotp(CredentialRef cred, NodeRef field) => (ActionResult r);            // credential-class; TAINTS frame
+  ListCredentials(int32 tab_id, url.mojom.Origin origin, CredentialUsePolicy policy) => (ReadResult r, array<CredentialRef> creds);  // opaque handles, NO secrets/usernames
+  FillCredential(CredentialRef cred, NodeRef username_field, NodeRef password_field, CredentialUsePolicy policy) => (ActionResult r);  // credential-class; TAINTS frame
+  FillTotp(CredentialRef cred, NodeRef field, CredentialUsePolicy policy) => (ActionResult r);            // credential-class; TAINTS frame
   MarkCredentialInjection(FrameRef frame) => (ActionResult r);               // skill-driven 3rd-party fill: taint trigger (§15)
   AddObserver(pending_remote<ControlObserver> observer);     // events for the agent
 };
@@ -404,7 +407,7 @@ interface BrainConsole {
   ListSessions() => (BrainResult r);
   LoadSession(string session_id) => (BrainResult r);
   SendMessage(string session_id, string text, BrainTabContext? tab_context,
-              BrainModelSelection? model) => (BrainResult r);
+              BrainModelSelection? model, BrainPermissionMode permission_mode) => (BrainResult r);
   CancelTurn(string session_id) => (BrainResult r);
   ListModels() => (BrainResult r);        // Pie registry + auth capabilities
   ListProviderAuth() => (BrainResult r);
@@ -434,8 +437,10 @@ single chokepoint; the WebUI structurally can't drive, and the brain can't reach
 - **Confirmation gates** for high-risk classes → `needs_confirmation`, surfaced
   in the chat (the permission bar) and answered via
   `ControlConsole.RespondToConfirmation`. "Cancel my flight" = destructive/money
-  → must confirm. Approval grants are scoped to the action class/op/target
-  material, single-use, short-lived, and bounded.
+  → must confirm. Saved-password use is pre-authorized in normal agent modes and
+  only prompts when the user selected ask-for-approval mode; locked Vault/passkey
+  flows still require native user presence. Approval grants are scoped to the
+  action class/op/target material, single-use, short-lived, and bounded.
 - **`Eval` + raw input are high-risk by default.** `Eval` is arbitrary code — it
   can read hidden DOM, inspect/submit forms, mutate state, and **bypass snapshot
   redaction** → gate + heavily audit (or require an explicit capability).
@@ -632,9 +637,10 @@ app) for view/edit/add, managing agent grants, and the audit log.
 Three structural guarantees keep the plaintext out of the model — defense in depth:
 
 1. **The fill is native.** The secret lives in the browser process
-   (`PasswordStore` / `OSCrypt`); `FillCredential` hands it to Chromium's native
-   autofill, which fills the renderer directly. It never crosses into the agent's
-   V8 isolate or the model context.
+   (`PasswordStore` / `OSCrypt`); `FillCredential` resolves an opaque handle to
+   the matching Chromium password entry and fills the target fields through the
+   browser's semantic action path. It never crosses into the agent's V8 isolate
+   or the model context.
 2. **The interface has no secret field.** `FillCredential` returns an
    `ActionResult` — there is *structurally no channel* to return a password.
 3. **Snapshots redact field values** (§12) — even reading a filled password,
@@ -644,29 +650,36 @@ The flow, entirely through the broker as the **`credential`** class:
 
 ```
 agent → ListCredentials(origin)
-   broker → Vault → [{handle, label:"work", source:"stead_vault", has_totp, has_passkey}]  // opaque; NO username/secret
+   broker → Vault → [{handle, label:"Account 1", source:"stead_vault", has_totp, has_passkey}]  // opaque; NO username/secret
 agent → FillCredential(handle, {username_ref, password_ref})
-   broker: class=credential → gate (confirm / pre-authorized?) → ensure Vault unlocked
+   broker: class=credential → confirm only in ask-for-approval mode → ensure Vault unlocked
          → read secret IN browser process → native autofill into the two field refs
          → ActionResult{ok}  (no secret) → audit{cred used, origin, action_id}
 ```
 
-Implementation status: the native control layer already exposes these brokered
-credential methods and routes them through the credential-class gate/audit path,
-but the Vault backend is intentionally fail-closed until the §18 spike verifies
-the password-manager/TOTP/passkey pieces in the Helium patch set. Third-party
-manager skills can still call `MarkCredentialInjection(frame)` to trigger the
-same post-fill taint path.
+Implementation status: the native control layer now wires `ListCredentials` and
+`FillCredential` to Chromium's existing password manager (`PasswordStore` via the
+tab's `ChromePasswordManagerClient`). Returned handles are random, short-lived,
+browser-process-only cache keys; the model receives no username/password. `FillTotp`
+and passkey-specific behavior remain deferred until the §18 spike verifies the
+TOTP/passkey pieces in the Helium patch set. Third-party manager skills can still
+call `MarkCredentialInjection(frame)` to trigger the same post-fill taint path.
+`BrainConsole.SendMessage` carries the current UI permission mode into the brain
+protocol; the browser `BrainBroker` maps `Ask →
+CredentialUsePolicy::AskForApproval` and `Read/Full →
+CredentialUsePolicy::Preauthorized` before any credential tool reaches
+`AgentControl`.
 
-- **Enumerate, don't reveal:** `ListCredentials` is **origin-scoped + intent-gated**
+- **Enumerate, don't reveal:** `ListCredentials` is **origin-scoped + policy-gated**
   and returns **opaque handles + coarse labels** (a user-set nickname, or "Account 1")
   + capability flags — **not the username** by default (usernames are account
-  metadata; revealed only after the user approves credential use for that origin).
+  metadata; revealed only when the current permission mode allows credential use).
   Enough for the agent to *choose* ("my work account" → that handle), never the
   password/TOTP/passkey secret.
-- **TOTP & passkeys:** `FillTotp(cred_id, ref)` generates and fills the current
-  code natively; passkey logins run the native WebAuthn ceremony (Touch ID /
-  user-presence is a built-in gate). The agent never sees a code or key.
+- **TOTP & passkeys:** target behavior is `FillTotp(cred_id, ref)` generating
+  and filling the current code natively, with passkey logins running the native
+  WebAuthn ceremony (Touch ID / user-presence is a built-in gate). The agent
+  never sees a code or key. This remains behind the §18 TOTP/passkey spike.
 - **Sign-up / generation:** the agent can request a generated password — the Vault
   generates, fills the password + confirm fields, and offers to save the new
   entry. The agent orchestrates "generate → fill → save"; the value stays native.
@@ -697,7 +710,8 @@ If the Vault is locked when a credential is needed, the broker triggers a system
 unlock (Touch ID / master password) — a **user-presence gate the agent can't
 satisfy on its own.** The human is always in the loop for unlocking; after that,
 per-site / per-credential grants (confirm-on-first-use, remembered, revocable, in
-`ControlConsole`) govern reuse. The agent never holds the master key.
+`ControlConsole`) govern reuse when ask-for-approval mode is active. The agent
+never holds the master key.
 
 ### Third-party managers (1Password, Proton Pass, Bitwarden…) — via skills
 
