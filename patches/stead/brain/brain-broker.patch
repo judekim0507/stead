@@ -1072,6 +1072,7 @@ index 0000000000000..71246ae8e56d
 +  }
 +  const std::string request_id = NextRequestId();
 +  base::DictValue request = MakeRequest("initialize", request_id);
++  request.Set("file_access_mode", "session_only");
 +  request.Set("dev_allow_config_files", false);
 +  request.Set("approved_roots", base::ListValue());
 +  mojom::BrainResultPtr result = SendRequest(std::move(request));
