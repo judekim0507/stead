@@ -5,9 +5,11 @@
 > Design notes, refined with external review. Build-ready where marked "pinned."
 >
 > **The one-line thesis:** the moat is **not** "native Playwright." It is a
-> *compact, native, observable browser-control substrate with model-friendly
-> code ergonomics.* The **typed primitives are the contract**; the REPL is a
-> thin ergonomic layer on top of them.
+> *compact, native, observable browser-control substrate.* The **typed primitives
+> are the contract *and* the interface** — the agent drives the browser with
+> structured, per-action-gated tool calls (`browser_click(ref)`, …). A Playwright
+> REPL is explicitly **rejected** for Stead (§10); `browser_eval` is the one code
+> escape hatch.
 
 ---
 
@@ -75,9 +77,12 @@ model's training data — what data have LLMs seen the most? Code."* Their promp
 wrap real Playwright/CDP — they get it free. We are native, so reimplementing
 Playwright's full surface (auto-wait, locators, frames, dialogs, downloads, file
 chooser, network events, nav races, actionability) is the **wrong target**.
-We define a **small, Playwright-*shaped* dialect** — familiar enough to be
-training-aligned, not a clone. Training-alignment comes from *shape and naming*,
-not from a 1:1 API.
+We ship **structured typed tools** with Playwright-*flavored* names
+(`browser_click`, `browser_fill`, `browser_snapshot`) — the training-alignment
+comes from *naming*, not from letting the agent write Playwright scripts. The
+"agent writes code" REPL is Aside's *substrate* talking (they wrap Node+CDP for
+free); native, it fights our per-action gating, so we **reject it** (§10).
+`browser_eval` covers the long tail where code is genuinely warranted.
 
 ---
 
@@ -86,8 +91,9 @@ not from a 1:1 API.
 This is #1 — the novel/risky part, and where the footprint + speed + (per §6)
 *accuracy* wins live. Two framings to hold:
 
-- **The typed primitives are the real contract** (§11). The REPL/dialect is a
-  thin ergonomic layer above them — don't over-invest in it early.
+- **The typed primitives are the contract *and* the interface** (§11). The agent
+  calls them as structured tools — **no Playwright REPL** (§10 says why it's
+  rejected). `browser_eval` is the only "write code" surface.
 - **"Observable" is part of the moat,** not just safety: structured events (§9),
   an audit log, and the lock overlay (§12) are how a user *trusts* an agent
   driving their real session. Trust is a differentiator.
@@ -232,22 +238,40 @@ milestones rather than every backend progress tick.
 
 ---
 
-## 10. The REPL & the **two distinct JS worlds** (correction)
+## 10. The action interface: structured tools, **not** a REPL (decision)
 
-These are different trust/performance/failure domains; keep them separate:
+**The agent drives the browser with structured, typed tool calls** —
+`browser_click(ref)`, `browser_fill(ref, text)`, `browser_snapshot()`, … — each
+mapping 1:1 to an `AgentControl` primitive (§11). A Playwright-style **REPL**
+(the agent writes JS scripts we execute) is **explicitly rejected** for Stead.
+Why:
 
-- **The agent REPL/dialect** runs in a **utility-process V8 isolate** with async
-  Mojo bindings to **`AgentControl`** (the brokered surface, §11 — never raw
-  `BrowserControl`). Isolated from the browser process — a hung or runaway agent
-  script can't take the browser down.
-- **`page.evaluate(js)`** marshals code into the **renderer's isolated world**
-  via `RenderFrameHost::ExecuteJavaScriptInIsolatedWorld(...)` (page DOM access,
-  runs in the page's process), routed by the ref's `frame_token`.
+- **It breaks per-action safety.** The whole broker — action classes, confirmation
+  gates, audit, taint (§12) — works *because* each action is a discrete, typed
+  event. A script is one opaque blob the broker can't classify/gate/audit per
+  action. Arbitrary agent code against the user's logged-in tabs is the opposite
+  of a trust-first browser.
+- **It's Aside's substrate, not a law.** Aside wraps Node+Playwright+CDP, so
+  "write Playwright code" is free *for them*. Native, it's extra work that fights
+  the model above — a substrate-driven choice, not a first-principles win.
+- **Its advantages are weak for gated interaction.** The "batch a loop of actions"
+  pitch mostly evaporates on live pages (refs go stale, dialogs interrupt → the
+  agent re-perceives after nearly every action anyway; the loop is real for
+  *scraping*, not *interacting*). And "the model knows Playwright" has eroded —
+  2026 frontier models are heavily post-trained on **structured tool use**.
+- **Training-alignment survives via naming.** The tools are Playwright-*flavored*
+  (`browser_click`/`browser_fill`), so the model is comfortable without a REPL.
 
-The **dialect** is small + Playwright-shaped and is *thin sugar* over the §11
-primitives: `snapshot()`, `click(ref)`, `fill(ref, text)`, `focus(ref)`,
-`evaluate(js)`, `goto(url)`, tabs; `locator()` later. No CDP, no Node, no
-Playwright npm.
+**The one code surface is `browser_eval`** — arbitrary JS in the renderer's
+**isolated world** (`RenderFrameHost::ExecuteJavaScriptInIsolatedWorld`, routed by
+the ref's `frame_token`) for the genuine long tail: DOM inspection, data
+extraction/processing, reverse-engineering a site's API. It's one gated,
+high-risk tool (§12) — not the primary interface. (No utility-process V8 REPL
+isolate, no Node, no CDP.)
+
+**Residual concern + its real fix:** long *sequential* flows cost model
+round-trips. If evals ever show that hurting, the fix is **light batching /
+parallel tool calls**, not a REPL. Revisit only then.
 
 ---
 
@@ -817,7 +841,8 @@ matches the source frame, not the tab's current main frame.
    `Screenshot`) + the public `AgentControl` surface — so the gate/audit path
    exists from the very first action (no raw primitives without the broker, §12).
 2. **Fixture suite** (§16) — the correctness bar.
-3. **Tiny JS REPL dialect** over the primitives (§10).
+3. **`browser_eval` escape hatch** (§10) — the one code surface; the structured
+   tools are already the interface from step 1 (no REPL).
 4. **BrainBroker + bundled Rust helper** — `BrainConsole` for WebUI sessions/auth,
    framed JSON stdio to `stead-brain`, and tool-call routing through
    `AgentControl`.
@@ -881,9 +906,10 @@ framework helper (`.value=`+`dispatchEvent`, `execCommand('insertText')`,
 | Bucket | Tools | Provided by |
 |---|---|---|
 | **Harness** | scoped `files.*`, `memory`, `Skill`, `get_time`, `ask_user`, `notification`, credentialless capped `WebFetch`; deferred: `WebSearch`; excluded from v1: shell/subagents | bundled Rust brain on Pie agent core |
-| **Browser-native** ⭐ | the REPL dialect, AX snapshot, tabs (open/close/list/adopt), `browsing_history_search`, screenshots, fetch-with-cookies, `pdf`, structured events | **#1 — the moat (`BrowserControl`)** |
+| **Browser-native** ⭐ | structured `browser_*` tools (snapshot/click/fill/nav/…) + `browser_eval`, AX snapshot, tabs (open/close/list/adopt), `browsing_history_search`, screenshots, fetch-with-cookies, `pdf`, structured events | **#1 — the moat (`BrowserControl`)** |
 | **Skills** | Gmail, Notion, Slack, GitHub, 1Password… | later, on top of browser-native |
 
-Mirror Aside's minimalism: a couple of core tools (the REPL + `bash`); everything
-page-related is "write code" against the dialect — which is why the prompt stays
-~10K tokens, not 20K.
+Contrast with Aside: their page surface is a **REPL** (write Playwright code +
+`bash`). Stead's is **structured tools** with Playwright-flavored names +
+`browser_eval` for the long tail — gated per action (§10), and still lean: the
+naming carries the training-alignment, so we don't pay a big prompt tax.
