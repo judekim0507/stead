@@ -6,6 +6,10 @@ on:
         required: false
         description: "Runner image name"
         default: "macos-latest"
+      archs:
+        required: false
+        description: "JSON array of archs to build"
+        default: '["arm64","x86_64"]'
       do-release:
         required: false
         type: boolean
@@ -20,7 +24,7 @@ jobs:
     name: Build macOS binaries of Stead
     strategy:
       matrix:
-        arch: [arm64, x86_64]
+        arch: ${{ fromJSON(inputs.archs) }}
       fail-fast: true
       max-parallel: 2
     uses: ./.github/workflows/building.yml

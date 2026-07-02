@@ -6,6 +6,13 @@ runs:
       uses: actions/setup-python@v6
       with:
         python-version: '3.13'
+    - name: Checkout Stead brain workspace (sibling checkout for packaging)
+      run: |
+        if [ ! -d ../brain/.git ]; then
+          git clone --depth 1 https://github.com/judekim0507/stead-brain ../brain
+        fi
+        rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      shell: bash
     - name: Copy GitHub specific scripts to git-root folder
       run: cp -va ./.github/scripts/ ./ ; date +%s > ./epoch_job_start.txt
       shell: bash
