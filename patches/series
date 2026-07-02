@@ -42,3 +42,5 @@ stead/newtab/newtab-ntp-redirect.patch
 stead/agent-control/native-control-layer.patch
 stead/brain/brain-broker.patch
 stead/settings/agent-settings-page.patch
+stead/agent-control/drive-overlay-and-tab-context.patch
+stead/brain/replay-ready-to-new-observers.patch

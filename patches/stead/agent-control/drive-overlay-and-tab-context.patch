@@ -1,0 +1,277 @@
+diff --git a/chrome/browser/ui/stead/agent_control/agent_control.mojom b/chrome/browser/ui/stead/agent_control/agent_control.mojom
+index 5f5e3aa..71ae87f 100644
+--- a/chrome/browser/ui/stead/agent_control/agent_control.mojom
++++ b/chrome/browser/ui/stead/agent_control/agent_control.mojom
+@@ -107,6 +107,14 @@ struct TabInfo {
+   bool likely_authenticated;
+ };
+ 
++// Coarse context for a surface's bound "current tab" chip. Same redaction
++// stance as TabInfo: URL/title only, no cookies or account metadata.
++struct TabContextInfo {
++  int32 tab_id;
++  string url;
++  string title;
++};
++
+ struct CredentialRef {
+   // Opaque Vault handle. It must not encode secret material.
+   string handle;
+@@ -281,6 +289,9 @@ interface ConsoleObserver {
+   OnAuditEntry(AuditEntry entry);
+   OnConfirmation(ConfirmationRequest request);
+   OnCancelled(int32 tab_id);
++  // Fired when the broker starts/stops actively driving a tab (any successful
++  // non-read action marks the tab as driven; it clears on idle or Cancel).
++  OnDrivingStateChanged(int32 tab_id, bool driving);
+ };
+ 
+ // AgentControl is the broker-facing surface. Raw BrowserControl primitives stay
+@@ -345,4 +356,8 @@ interface ControlConsole {
+   GetAuditLog(uint32 max_entries) => (array<AuditEntry> entries);
+   RespondToConfirmation(int32 action_id, bool approve);
+   Cancel(int32 tab_id);
++  // Active tab of the profile's last-active window, or null when the active
++  // tab is not an http(s) page. Read-only display context; not a driving
++  // surface.
++  GetActiveTabContext() => (TabContextInfo? context);
+ };
+diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+index 46fb0fb..d3be4ca 100644
+--- a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+@@ -22,6 +22,7 @@
+ #include "base/containers/span.h"
+ #include "base/files/file_path.h"
+ #include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
+ #include "base/json/json_writer.h"
+ #include "base/json/string_escape.h"
+ #include "base/location.h"
+@@ -37,6 +38,8 @@
+ #include "chrome/browser/file_select_helper.h"
+ #include "chrome/browser/password_manager/chrome_password_manager_client.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser.h"
++#include "chrome/browser/ui/browser_finder.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
+ #include "chrome/browser/ui/tabs/tab_enums.h"
+@@ -204,6 +207,40 @@ constexpr int32_t kSteadProbeWorldId = content::ISOLATED_WORLD_ID_CONTENT_END;
+ constexpr int32_t kSteadEvalWorldId =
+     content::ISOLATED_WORLD_ID_CONTENT_END + 1;
+ 
++// How long a tab stays "driving" after the last successful non-read action.
++constexpr base::TimeDelta kDrivingIdleTimeout = base::Seconds(4);
++
++// Interim tab-surface driving indicator, injected into the isolated world.
++// Write-only (no result callback) and idempotent; page JS can observe the DOM
++// node, so this is a visibility affordance, not a trust boundary. The
++// views-based overlay that pages cannot observe replaces this once the
++// desktop-UI milestone lands.
++constexpr char kDriveOverlayShowScript[] = R"js((() => {
++  const id = '__stead_drive_overlay__';
++  if (!document || !document.documentElement) { return; }
++  if (document.getElementById(id)) { return; }
++  const overlay = document.createElement('div');
++  overlay.id = id;
++  overlay.setAttribute('style',
++      'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
++      'background:rgba(8,12,20,0.22);' +
++      'box-shadow:inset 0 0 0 3px rgba(34,211,238,0.6);');
++  const badge = document.createElement('div');
++  badge.setAttribute('style',
++      'position:fixed;top:12px;left:50%;transform:translateX(-50%);' +
++      'padding:6px 14px;border-radius:999px;background:rgba(10,14,22,0.88);' +
++      'color:#dff7fb;font:600 12px/1.4 -apple-system,system-ui,sans-serif;' +
++      'letter-spacing:0.02em;box-shadow:0 4px 24px rgba(0,0,0,0.4);');
++  badge.textContent = 'Stead is controlling this tab';
++  overlay.appendChild(badge);
++  document.documentElement.appendChild(overlay);
++})();)js";
++
++constexpr char kDriveOverlayHideScript[] = R"js((() => {
++  const overlay = document.getElementById('__stead_drive_overlay__');
++  if (overlay) { overlay.remove(); }
++})();)js";
++
+ struct TabEventState {
+   bool found = false;
+   std::string frame_token;
+@@ -1490,6 +1527,11 @@ class SteadAgentControlService::PrivateBrowserControl {
+                ? ChromePasswordManagerClient::FromWebContents(web_contents)
+                : nullptr;
+   }
++  // Outer-service access for the drive overlay; the tab lookup itself stays
++  // private to the raw-control layer.
++  content::WebContents* TabForDriveOverlay(int32_t tab_id) {
++    return FindTabById(tab_id);
++  }
+   bool IsAgentOwnedTab(int32_t tab_id) const;
+   mojom::ActionClass ClassifyAccessibilityAction(
+       const mojom::NodeRef& ref,
+@@ -2203,6 +2245,7 @@ void SteadAgentControlService::Shutdown() {
+   credential_cache_.clear();
+   credential_cache_order_.clear();
+   cancel_epochs_by_tab_.clear();
++  last_drive_action_by_tab_.clear();
+   if (download_observer_) {
+     download_observer_->Shutdown();
+   }
+@@ -2296,11 +2339,44 @@ void SteadAgentControlService::Cancel(int32_t tab_id) {
+   pending_action_by_tab_.erase(tab_id);
+   ClearApprovalGrantsForTab(tab_id);
+   ClearPendingConfirmationsForTab(tab_id);
++  ClearTabDriving(tab_id);
+   for (auto& observer : console_observers_) {
+     observer->OnCancelled(tab_id);
+   }
+ }
+ 
++void SteadAgentControlService::GetActiveTabContext(
++    GetActiveTabContextCallback callback) {
++  Browser* browser = chrome::FindLastActiveWithProfile(profile_);
++  if (!browser || !browser->tab_strip_model()) {
++    std::move(callback).Run(nullptr);
++    return;
++  }
++  content::WebContents* contents =
++      browser->tab_strip_model()->GetActiveWebContents();
++  if (!contents) {
++    std::move(callback).Run(nullptr);
++    return;
++  }
++  const GURL& url = contents->GetLastCommittedURL();
++  // Context is only meaningful for web pages; WebUI and internal schemes stay
++  // out of the model-facing tab context.
++  if (!url.SchemeIsHTTPOrHTTPS()) {
++    std::move(callback).Run(nullptr);
++    return;
++  }
++  const SessionID session_id = sessions::SessionTabHelper::IdForTab(contents);
++  if (!session_id.is_valid()) {
++    std::move(callback).Run(nullptr);
++    return;
++  }
++  auto context = mojom::TabContextInfo::New();
++  context->tab_id = session_id.id();
++  context->url = url.spec();
++  context->title = base::UTF16ToUTF8(contents->GetTitle());
++  std::move(callback).Run(std::move(context));
++}
++
+ void SteadAgentControlService::ListTabs(ListTabsCallback callback) {
+   const int32_t action_id = NextActionId();
+   RecordAudit(*MakeResult(action_id, true, kOk, "Listed tabs."),
+@@ -5665,6 +5741,66 @@ void SteadAgentControlService::ClearPendingActionIfStillPending(
+   }
+ }
+ 
++void SteadAgentControlService::MarkTabDriving(int32_t tab_id) {
++  const bool was_driving = last_drive_action_by_tab_.contains(tab_id);
++  last_drive_action_by_tab_[tab_id] = base::TimeTicks::Now();
++  if (!was_driving) {
++    for (auto& observer : console_observers_) {
++      observer->OnDrivingStateChanged(tab_id, true);
++    }
++  }
++  // Re-injected on every action (idempotent) so a navigation mid-drive gets
++  // the overlay back on the next action.
++  UpdateDriveOverlay(tab_id, /*show=*/true);
++  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++      FROM_HERE,
++      base::BindOnce(&SteadAgentControlService::CheckDrivingIdle,
++                     weak_factory_.GetWeakPtr(), tab_id),
++      kDrivingIdleTimeout + base::Milliseconds(50));
++}
++
++void SteadAgentControlService::CheckDrivingIdle(int32_t tab_id) {
++  const auto last = last_drive_action_by_tab_.find(tab_id);
++  if (last == last_drive_action_by_tab_.end()) {
++    return;
++  }
++  if (base::TimeTicks::Now() - last->second >= kDrivingIdleTimeout) {
++    ClearTabDriving(tab_id);
++  }
++  // Otherwise a newer action has already queued its own idle check.
++}
++
++void SteadAgentControlService::ClearTabDriving(int32_t tab_id) {
++  if (last_drive_action_by_tab_.erase(tab_id) == 0) {
++    return;
++  }
++  for (auto& observer : console_observers_) {
++    observer->OnDrivingStateChanged(tab_id, false);
++  }
++  UpdateDriveOverlay(tab_id, /*show=*/false);
++}
++
++void SteadAgentControlService::UpdateDriveOverlay(int32_t tab_id, bool show) {
++  if (!browser_control_) {
++    return;
++  }
++  content::WebContents* web_contents =
++      browser_control_->TabForDriveOverlay(tab_id);
++  if (!web_contents) {
++    return;
++  }
++  content::RenderFrameHost* frame = web_contents->GetPrimaryMainFrame();
++  if (!frame || !frame->IsRenderFrameLive()) {
++    return;
++  }
++  // Write-only injection with no result callback, so a secret-tainted frame
++  // can never leak page state back through this path.
++  frame->ExecuteJavaScriptInIsolatedWorld(
++      base::UTF8ToUTF16(std::string(show ? kDriveOverlayShowScript
++                                         : kDriveOverlayHideScript)),
++      base::NullCallback(), kSteadProbeWorldId);
++}
++
+ uint64_t SteadAgentControlService::CancelEpochForTab(int32_t tab_id) const {
+   const auto epoch = cancel_epochs_by_tab_.find(tab_id);
+   return epoch == cancel_epochs_by_tab_.end() ? 0 : epoch->second;
+@@ -6176,6 +6312,11 @@ void SteadAgentControlService::RecordAudit(
+   while (audit_log_.size() > kMaxAuditEntries) {
+     audit_log_.pop_front();
+   }
++
++  if (result.ok && !result.needs_confirmation && tab_id > 0 &&
++      action_class != mojom::ActionClass::kReadOnly) {
++    MarkTabDriving(tab_id);
++  }
+ }
+ 
+ void SteadAgentControlService::NotifyConfirmation(
+diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
+index e1fff92..f7281fc 100644
+--- a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
+@@ -172,6 +172,7 @@ class SteadAgentControlService : public KeyedService,
+   void GetAuditLog(uint32_t max_entries, GetAuditLogCallback callback) override;
+   void RespondToConfirmation(int32_t action_id, bool approve) override;
+   void Cancel(int32_t tab_id) override;
++  void GetActiveTabContext(GetActiveTabContextCallback callback) override;
+ 
+  private:
+   class PrivateBrowserControl;
+@@ -287,6 +288,10 @@ class SteadAgentControlService : public KeyedService,
+   int32_t TakePendingActionForTab(int32_t tab_id);
+   void SchedulePendingActionClear(int32_t tab_id, int32_t action_id);
+   void ClearPendingActionIfStillPending(int32_t tab_id, int32_t action_id);
++  void MarkTabDriving(int32_t tab_id);
++  void ClearTabDriving(int32_t tab_id);
++  void CheckDrivingIdle(int32_t tab_id);
++  void UpdateDriveOverlay(int32_t tab_id, bool show);
+   uint64_t CancelEpochForTab(int32_t tab_id) const;
+   bool WasCancelledSince(int32_t tab_id, uint64_t cancel_epoch) const;
+   int32_t PeekPendingActionForTab(int32_t tab_id) const;
+@@ -367,6 +372,9 @@ class SteadAgentControlService : public KeyedService,
+   base::flat_map<std::string, CachedCredential> credential_cache_;
+   std::deque<std::string> credential_cache_order_;
+   base::flat_map<int32_t, uint64_t> cancel_epochs_by_tab_;
++  // Tabs the agent is actively driving (tab_id -> last successful non-read
++  // action). Drives the ConsoleObserver driving signal and the tab overlay.
++  base::flat_map<int32_t, base::TimeTicks> last_drive_action_by_tab_;
+   struct ApprovalGrant {
+     int32_t tab_id;
+     mojom::ActionClass action_class;

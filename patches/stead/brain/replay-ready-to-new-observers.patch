@@ -1,0 +1,58 @@
+diff --git a/chrome/browser/ui/stead/brain/stead_brain_service.cc b/chrome/browser/ui/stead/brain/stead_brain_service.cc
+index b3f6647..a3db4d9 100644
+--- a/chrome/browser/ui/stead/brain/stead_brain_service.cc
++++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
+@@ -358,8 +358,11 @@ void SteadBrainService::Shutdown() {
+ 
+ void SteadBrainService::AddObserver(
+     mojo::PendingRemote<mojom::BrainObserver> observer) {
+-  observers_.Add(std::move(observer));
++  const mojo::RemoteSetElementId id = observers_.Add(std::move(observer));
+   SendInitializeIfNeeded();
++  if (last_ready_event_) {
++    observers_.Get(id)->OnBrainEvent(last_ready_event_.Clone());
++  }
+ }
+ 
+ void SteadBrainService::Initialize(InitializeCallback callback) {
+@@ -630,6 +633,7 @@ bool SteadBrainService::LaunchHelper(std::string* error_message) {
+ 
+ void SteadBrainService::StopHelper() {
+   initialized_ = false;
++  last_ready_event_.reset();
+   pending_user_prompts_.clear();
+   stdin_write_.reset();
+   if (process_.IsValid()) {
+@@ -740,6 +744,7 @@ void SteadBrainService::OnBrainPipeClosed() {
+   process_.Close();
+   stdin_write_.reset();
+   initialized_ = false;
++  last_ready_event_.reset();
+   base::DictValue event;
+   event.Set("type", "error");
+   event.Set("code", "brain_exited");
+@@ -753,6 +758,9 @@ void SteadBrainService::EmitEvent(const base::DictValue& event) {
+   out->request_id = OptionalString(event, "request_id");
+   out->session_id = OptionalString(event, "session_id");
+   out->payload_json = base::WriteJson(event).value_or("{}");
++  if (out->type == "ready") {
++    last_ready_event_ = out.Clone();
++  }
+   for (auto& observer : observers_) {
+     observer->OnBrainEvent(out.Clone());
+   }
+diff --git a/chrome/browser/ui/stead/brain/stead_brain_service.h b/chrome/browser/ui/stead/brain/stead_brain_service.h
+index 0a8514e..a949996 100644
+--- a/chrome/browser/ui/stead/brain/stead_brain_service.h
++++ b/chrome/browser/ui/stead/brain/stead_brain_service.h
+@@ -125,6 +125,10 @@ class SteadBrainService : public KeyedService, public mojom::BrainConsole {
+   base::Process process_;
+   base::ScopedFD stdin_write_;
+   bool initialized_ = false;
++  // Last "ready" event from the helper, replayed to observers that bind after
++  // initialization so late-opened surfaces still learn the skill catalog and
++  // brain metadata.
++  mojom::BrainEventPtr last_ready_event_;
+   int64_t next_request_id_ = 1;
+   std::set<std::string> pending_user_prompts_;
+   base::flat_map<std::string, mojom::BrainPermissionMode>
