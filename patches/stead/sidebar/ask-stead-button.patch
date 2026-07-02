@@ -1,16 +1,17 @@
 --- a/chrome/browser/ui/browser_actions.cc
 +++ b/chrome/browser/ui/browser_actions.cc
-@@ -266,8 +266,8 @@
+@@ -263,6 +263,11 @@ void BrowserActions::InitializeSidePanelActions() {
                        kActionSidePanelShowBookmarks, bwi, true)
            .Build());
    root_action_item_->AddChild(
--      SidePanelAction(SidePanelEntryId::kReadingList, IDS_READ_LATER_TITLE,
--                      IDS_READ_LATER_TITLE, kReadingListIcon,
 +      SidePanelAction(SidePanelEntryId::kReadingList, IDS_STEAD_SIDEBAR_TITLE,
 +                      IDS_STEAD_SIDEBAR_TITLE, vector_icons::kChatIcon,
-                       kActionSidePanelShowReadingList, bwi, true)
-           .Build());
-   if (TabsFromOtherDevicesSidePanelCoordinator::IsSupported(profile)) {
++                      kActionSidePanelShowReadingList, bwi, true)
++          .Build());
++  root_action_item_->AddChild(
+       SidePanelAction(SidePanelEntryId::kAboutThisSite,
+                       IDS_PAGE_INFO_ABOUT_THIS_PAGE_TITLE,
+                       IDS_PAGE_INFO_ABOUT_THIS_PAGE_TITLE,
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -9270,6 +9270,10 @@
