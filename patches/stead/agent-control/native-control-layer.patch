@@ -288,7 +288,7 @@ index 0000000000000..f9f3cf0ea8747
 +    "//chrome/browser/profiles:profile",
 +    "//chrome/browser/ui/browser_window",
 +    "//chrome/browser/ui/tabs:tab_strip",
-+    "//components/download/public/common",
++    "//components/download/public/common:public",
 +    "//components/input",
 +    "//components/javascript_dialogs",
 +    "//components/permissions",
