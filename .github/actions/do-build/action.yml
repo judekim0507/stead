@@ -31,6 +31,31 @@ outputs:
 runs:
   using: composite
   steps:
+    # The Actions cache service token is only visible to JS actions, not shell
+    # steps. Re-export it so sccache's GHA backend can start; upstream ran on
+    # runners where this was already provided.
+    - name: Expose Actions cache token for sccache
+      uses: actions/github-script@v7
+      with:
+        script: |
+          for (const k of ['ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_RUNTIME_TOKEN']) {
+            if (process.env[k]) core.exportVariable(k, process.env[k]);
+          }
+
+    - name: Select sccache backend
+      shell: bash
+      run: |
+        if [ -n "${ACTIONS_RUNTIME_TOKEN:-}" ] && [ -n "${ACTIONS_RESULTS_URL:-}${ACTIONS_CACHE_URL:-}" ]; then
+          echo "SCCACHE_GHA_ENABLED=on" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_VERSION=${{ inputs.arch }}" >> "$GITHUB_ENV"
+          echo "sccache backend: GitHub Actions cache"
+        else
+          # Guaranteed-to-start fallback so the build never dies on cache init.
+          echo "SCCACHE_DIR=${GITHUB_WORKSPACE}/build/sccache_cache" >> "$GITHUB_ENV"
+          mkdir -p "${GITHUB_WORKSPACE}/build/sccache_cache"
+          echo "sccache backend: local disk (no Actions cache token)"
+        fi
+
     - name: generate timestamp
       run: echo TS=$(date +%s) >> $GITHUB_ENV
       shell: bash
