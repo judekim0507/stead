@@ -41,6 +41,10 @@ stead/newtab/newtab-ntp-redirect.patch
 
 stead/agent-control/native-control-layer.patch
 stead/brain/brain-broker.patch
-stead/settings/agent-settings-page.patch
+# Deferred: needs a rebase onto Chromium 149 — 3 hunks drift against
+# chrome_browser_interface_binders_webui_parts_desktop.cc, settings_menu.html,
+# and settings_ui.h. Non-essential (provider auth is also in the sidebar/chat
+# model controls); re-enable once the settings hunks are regenerated.
+# stead/settings/agent-settings-page.patch
 stead/agent-control/drive-overlay-and-tab-context.patch
 stead/brain/replay-ready-to-new-observers.patch

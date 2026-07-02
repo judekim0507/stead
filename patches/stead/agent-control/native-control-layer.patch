@@ -137,13 +137,27 @@ diff --git a/chrome/browser/file_select_helper.h b/chrome/browser/file_select_he
 index 37c575d..dd3c941 100644
 --- a/chrome/browser/file_select_helper.h
 +++ b/chrome/browser/file_select_helper.h
-@@ -16,1 +16,2 @@
+@@ -13,6 +13,7 @@
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/ref_counted.h"
+ #include "base/memory/weak_ptr.h"
 +#include "base/observer_list_types.h"
  #include "build/build_config.h"
-@@ -35,1 +36,2 @@
+ #include "components/enterprise/buildflags/buildflags.h"
+ #include "components/enterprise/common/files_scan_data.h"
+@@ -32,6 +33,7 @@
+ 
+ namespace content {
+ class FileSelectListener;
 +class RenderFrameHost;
  class WebContents;
-@@ -68,1 +70,18 @@
+ }
+ 
+@@ -64,7 +66,24 @@
+  public:
+   FileSelectHelper(const FileSelectHelper&) = delete;
+   FileSelectHelper& operator=(const FileSelectHelper&) = delete;
++
 +  class Observer : public base::CheckedObserver {
 +   public:
 +    virtual void OnFileChooserOpened(
@@ -157,22 +171,34 @@ index 37c575d..dd3c941 100644
 +
 +  static void AddObserver(Observer* observer);
 +  static void RemoveObserver(Observer* observer);
-+
+ 
 +  bool SelectFilesForSteadAgent(const std::vector<base::FilePath>& paths);
 +  bool CancelFileSelectionForSteadAgent();
 +
    // Show the file chooser dialog.
-@@ -139,1 +158,5 @@
+   static void RunFileChooser(
+       content::RenderFrameHost* render_frame_host,
+@@ -135,6 +154,10 @@
+   // Cleans up and releases this instance. This must be called after the last
+   // callback is received from the file chooser dialog.
+   void RunFileChooserEnd();
++
 +  void NotifySteadFileChooserOpened(
 +      const blink::mojom::FileChooserParams& params);
 +  void NotifySteadFileChooserClosed(bool files_selected);
-+
+ 
    // SelectFileDialog::Listener overrides.
-@@ -313,1 +336,4 @@
+   void FileSelected(const ui::SelectedFileInfo& file, int index) override;
+@@ -310,6 +333,9 @@
+   // The mode of file dialog last shown.
+   blink::mojom::FileChooserParams::Mode dialog_mode_;
+ 
 +  bool stead_file_chooser_open_ = false;
 +  bool stead_file_chooser_closed_ = false;
 +
    // The enumeration root directory for EnumerateDirectory() and
+   // RunFileChooser with kUploadFolder.
+   base::FilePath base_dir_;
 diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
 index 4df3401fdbb42..bba11ffb8281e 100644
 --- a/chrome/browser/ui/BUILD.gn
@@ -7694,15 +7720,24 @@ diff --git a/components/javascript_dialogs/tab_modal_dialog_manager.h b/componen
 index 4fdf256f3148e..1d7570525a4c4 100644
 --- a/components/javascript_dialogs/tab_modal_dialog_manager.h
 +++ b/components/javascript_dialogs/tab_modal_dialog_manager.h
-@@ -10,1 +10,3 @@
+@@ -7,9 +7,13 @@
+ 
+ #include <memory>
+ 
 +#include <string>
 +
  #include "base/functional/callback_forward.h"
-@@ -13,1 +15,3 @@
+ #include "base/memory/advanced_memory_safety_checks.h"
+ #include "base/memory/weak_ptr.h"
 +#include "base/observer_list.h"
 +#include "base/observer_list_types.h"
  #include "build/build_config.h"
-@@ -99,1 +103,20 @@ class TabModalDialogManager
+ #include "components/javascript_dialogs/tab_modal_dialog_manager_delegate.h"
+ #include "components/javascript_dialogs/tab_modal_dialog_view.h"
+@@ -96,6 +100,25 @@
+     kMaxValue = kSuppressedByOtherDialog,
+   };
+ 
 +  class Observer : public base::CheckedObserver {
 +   public:
 +    virtual void OnJavaScriptDialogShown(
@@ -7723,12 +7758,24 @@ index 4fdf256f3148e..1d7570525a4c4 100644
 +  };
 +
    TabModalDialogManager(const TabModalDialogManager&) = delete;
-@@ -107,1 +130,4 @@ class TabModalDialogManager
+   TabModalDialogManager& operator=(const TabModalDialogManager&) = delete;
+ 
+@@ -104,6 +127,9 @@
+   void BrowserActiveStateChanged();
+   void CloseDialogWithReason(DismissalCause reason);
+ 
 +  void AddObserver(Observer* observer);
 +  void RemoveObserver(Observer* observer);
 +
    void SetDialogShownCallbackForTesting(base::OnceClosure callback);
-@@ -201,1 +227,3 @@ class TabModalDialogManager
+   bool IsShowingDialogForTesting() const;
+   void ClickDialogButtonForTesting(bool accept,
+@@ -198,6 +224,8 @@
+   // A closure to be fired when a dialog is dismissed. For testing only.
+   DialogDismissedCallback dialog_dismissed_;
+ 
 +  base::ObserverList<Observer> observers_;
 +
    std::unique_ptr<TabModalDialogManagerDelegate> delegate_;
+ 
+   WEB_CONTENTS_USER_DATA_KEY_DECL();
