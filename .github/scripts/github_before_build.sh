@@ -30,6 +30,11 @@ fi
 echo 'symbol_level=1' >> "$_src_dir/out/Default/args.gn"
 echo 'chrome_pgo_phase=2' >> "$_src_dir/out/Default/args.gn"
 
+# Install the prebuilt Stead sidebar WebUI bundle into the tree so the grit
+# rule added by patches/stead can pack stead_sidebar_resources.pak. build.sh
+# does this for local builds; the CI pipeline must do it too.
+"$_root_dir/resources/stead/install_sidebar_to_tree.sh" "$_src_dir"
+
 cd "$_src_dir"
 
 ./tools/gn/bootstrap/bootstrap.py -o out/Default/gn --skip-generate-buildfiles
