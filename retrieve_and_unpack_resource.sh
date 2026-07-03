@@ -39,23 +39,47 @@ shift "$(($OPTIND -1))"
 
 _target_cpu=${1:-arm64}
 
+# Retry a command with backoff. The Chromium git host (googlesource) and the
+# download mirrors intermittently return HTTP 5xx on large fetches; a bare
+# failure there kills a multi-hour build for no code reason.
+_retry() {
+    local _attempts="$1"; shift
+    local _n=1
+    until "$@"; do
+        if [[ $_n -ge $_attempts ]]; then
+            echo "retry: command failed after $_n attempts: $*" >&2
+            return 1
+        fi
+        echo "retry: attempt $_n failed, retrying in $((_n * 20))s: $*" >&2
+        sleep "$((_n * 20))"
+        _n=$((_n + 1))
+    done
+}
+
+# A partial checkout left by a failed clone would make the next attempt refuse
+# to clone into a non-empty dir, so wipe it first.
+_clone_chromium() {
+    rm -rf "$_src_dir"
+    python3 "$_main_repo/utils/clone.py" "$@" -o "$_src_dir"
+}
+
 if $retrieve_generic; then
     if $clone; then
         if [[ $_target_cpu == "arm64" ]]; then
             # For arm64 (Apple Silicon)
-            python3 "$_main_repo/utils/clone.py" -p mac-arm -o "$_src_dir"
+            _retry 4 _clone_chromium -p mac-arm
         else
             # For amd64 (Intel)
-            python3 "$_main_repo/utils/clone.py" -p mac -o "$_src_dir"
+            _retry 4 _clone_chromium -p mac
         fi
     else
-        python3 "$_main_repo/utils/downloads.py" retrieve -i "$_main_repo/downloads.ini" -c "$_download_cache"
+        _retry 4 python3 "$_main_repo/utils/downloads.py" retrieve -i "$_main_repo/downloads.ini" -c "$_download_cache"
         python3 "$_main_repo/utils/downloads.py" unpack -i "$_main_repo/downloads.ini" -c "$_download_cache" "$_src_dir"
     fi
 
     # Retrieve and unpack general resources
-    python3 "$_main_repo/utils/downloads.py" retrieve -i "$_root_dir/downloads.ini" -c "$_download_cache"
-    python3 "$_main_repo/utils/downloads.py" retrieve -i "$_main_repo/deps.ini" -c "$_download_cache"
+    _retry 4 python3 "$_main_repo/utils/downloads.py" retrieve -i "$_root_dir/downloads.ini" -c "$_download_cache"
+    _retry 4 python3 "$_main_repo/utils/downloads.py" retrieve -i "$_main_repo/deps.ini" -c "$_download_cache"
     python3 "$_main_repo/utils/downloads.py" unpack -i "$_root_dir/downloads.ini" -c "$_download_cache" "$_src_dir"
     python3 "$_main_repo/utils/downloads.py" unpack -i "$_main_repo/deps.ini" -c "$_download_cache" "$_src_dir"
 fi
