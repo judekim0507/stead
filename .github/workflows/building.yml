@@ -16,10 +16,15 @@ on:
       os:
         required: true
         type: string
+      resume-run-id:
+        required: false
+        type: string
+        default: ""
 
 jobs:
   retrieve-resources:
     name: Retrieve resources required for building
+    if: ${{ inputs.resume-run-id == '' }}
     runs-on: ${{ inputs.os }}
     steps:
       - name: Clone repository
@@ -41,6 +46,7 @@ jobs:
 
   build_job_01:
     needs: retrieve-resources
+    if: ${{ !cancelled() && (needs.retrieve-resources.result == 'success' || needs.retrieve-resources.result == 'skipped') }}
     uses: ./.github/workflows/build-init.yml
     secrets: inherit
     permissions:
@@ -48,6 +54,7 @@ jobs:
     with:
       arch: ${{ inputs.arch }}
       os: ${{ inputs.os }}
+      resume-run-id: ${{ inputs.resume-run-id }}
 
   build_job_02:
     needs: build_job_01

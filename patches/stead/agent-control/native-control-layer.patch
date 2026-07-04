@@ -433,7 +433,7 @@ index 0000000000000..4cbb02c943bdb
 +
 +struct CredentialRef {
 +  // Opaque Vault handle. It must not encode secret material.
-+  string handle;
++  string opaque_handle;
 +  // Account-selector label. Username/email is allowed here so the agent can
 +  // choose between saved accounts; passwords, TOTP codes, cookies, payment
 +  // data, and passkey private material are never allowed.
@@ -510,7 +510,7 @@ index 0000000000000..4cbb02c943bdb
 +  string state;
 +  string message;
 +  string default_prompt;
-+  string handle;
++  string opaque_handle;
 +};
 +
 +struct PermissionPromptInfo {
@@ -537,7 +537,7 @@ index 0000000000000..4cbb02c943bdb
 +  bool upload_folder;
 +  bool need_local_path;
 +  bool use_media_capture;
-+  string handle;
++  string opaque_handle;
 +};
 +
 +struct ControlEvent {
@@ -627,9 +627,9 @@ index 0000000000000..4cbb02c943bdb
 +  OpenTab(url.mojom.Url url, bool agent_owned)
 +      => (ActionResult result, int32 tab_id);
 +  CloseTab(int32 tab_id) => (ActionResult result);
-+  HandleDialog(string handle, bool accept, string prompt_text)
++  HandleDialog(string opaque_handle, bool accept, string prompt_text)
 +      => (ActionResult result);
-+  HandleFileChooser(string handle, array<string> paths)
++  HandleFileChooser(string opaque_handle, array<string> paths)
 +      => (ActionResult result);
 +
 +  // Semantic AX actions. These route through RenderFrameHost AX actions rather
@@ -1508,7 +1508,7 @@ index 0000000000000..7a3e021c74dab
 +
 +mojom::DialogInfoPtr CloneDialogInfo(const mojom::DialogInfo& info) {
 +  return mojom::DialogInfo::New(info.type, info.state, info.message,
-+                                info.default_prompt, info.handle);
++                                info.default_prompt, info.opaque_handle);
 +}
 +
 +std::string JavaScriptDialogTypeToString(
@@ -1627,7 +1627,7 @@ index 0000000000000..7a3e021c74dab
 +      params.mode == blink::mojom::FileChooserParams::Mode::kUploadFolder;
 +  info->need_local_path = params.need_local_path;
 +  info->use_media_capture = params.use_media_capture;
-+  info->handle = handle;
++  info->opaque_handle = handle;
 +  return info;
 +}
 +
@@ -1638,7 +1638,7 @@ index 0000000000000..7a3e021c74dab
 +  auto info = mojom::FileChooserInfo::New();
 +  info->state = std::string(state);
 +  info->mode = std::string(mode);
-+  info->handle = handle;
++  info->opaque_handle = handle;
 +  return info;
 +}
 +
@@ -1654,7 +1654,7 @@ index 0000000000000..7a3e021c74dab
 +  clone->upload_folder = info.upload_folder;
 +  clone->need_local_path = info.need_local_path;
 +  clone->use_media_capture = info.use_media_capture;
-+  clone->handle = info.handle;
++  clone->opaque_handle = info.opaque_handle;
 +  return clone;
 +}
 +
@@ -5785,7 +5785,7 @@ index 0000000000000..7a3e021c74dab
 +    std::move(callback).Run(std::move(result));
 +  };
 +
-+  if (!credential || credential->handle.empty()) {
++  if (!credential || credential->opaque_handle.empty()) {
 +    finish(MakeResult(action_id, false, kTargetMissing,
 +                      "Credential handle was missing.",
 +                      /*stale=*/false, /*needs_snapshot=*/false,
@@ -5817,7 +5817,7 @@ index 0000000000000..7a3e021c74dab
 +
 +  mojom::ActionResultPtr gate = MaybeGateAction(
 +      action_id, tab_id, action_class, operation,
-+      CredentialFillApprovalScope(operation, credential->handle,
++      CredentialFillApprovalScope(operation, credential->opaque_handle,
 +                                  *username_field, password_field.get()),
 +      CredentialPolicyRequiresConfirmation(policy));
 +  if (gate) {
@@ -5825,7 +5825,7 @@ index 0000000000000..7a3e021c74dab
 +    return;
 +  }
 +
-+  const CachedCredential* cached = FindCachedCredential(credential->handle);
++  const CachedCredential* cached = FindCachedCredential(credential->opaque_handle);
 +  if (!cached) {
 +    finish(MakeResult(action_id, false, kCredentialMissing,
 +                      "Credential handle was missing or expired.",
@@ -5848,7 +5848,7 @@ index 0000000000000..7a3e021c74dab
 +
 +  const std::string username = base::UTF16ToUTF8(cached->username_value);
 +  const std::string password = base::UTF16ToUTF8(cached->password_value);
-+  credential_cache_.erase(credential->handle);
++  credential_cache_.erase(credential->opaque_handle);
 +  if (username.size() > kMaxFillValueBytes ||
 +      password.size() > kMaxFillValueBytes) {
 +    finish(MakeResult(action_id, false, kFillValueTooLarge,
@@ -5908,7 +5908,7 @@ index 0000000000000..7a3e021c74dab
 +    std::move(callback).Run(std::move(result));
 +  };
 +
-+  if (!credential || credential->handle.empty()) {
++  if (!credential || credential->opaque_handle.empty()) {
 +    finish(MakeResult(action_id, false, kTargetMissing,
 +                      "Credential handle was missing.",
 +                      /*stale=*/false, /*needs_snapshot=*/false,
@@ -5928,7 +5928,7 @@ index 0000000000000..7a3e021c74dab
 +
 +  mojom::ActionResultPtr gate = MaybeGateAction(
 +      action_id, tab_id, action_class, operation,
-+      CredentialFillApprovalScope(operation, credential->handle, *field,
++      CredentialFillApprovalScope(operation, credential->opaque_handle, *field,
 +                                  /*secondary_ref=*/nullptr),
 +      CredentialPolicyRequiresConfirmation(policy));
 +  if (gate) {

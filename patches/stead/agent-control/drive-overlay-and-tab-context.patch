@@ -16,7 +16,7 @@ index 5f5e3aa..71ae87f 100644
 +
  struct CredentialRef {
    // Opaque Vault handle. It must not encode secret material.
-   string handle;
+   string opaque_handle;
 @@ -281,6 +289,9 @@ interface ConsoleObserver {
    OnAuditEntry(AuditEntry entry);
    OnConfirmation(ConfirmationRequest request);

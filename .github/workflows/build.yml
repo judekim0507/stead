@@ -10,6 +10,10 @@ on:
         required: false
         description: "JSON array of archs to build"
         default: '["arm64","x86_64"]'
+      resume-run-id:
+        required: false
+        description: "Prior run ID whose build artifact to resume from (stead-owned files are re-synced from current patches)"
+        default: ""
       do-release:
         required: false
         type: boolean
@@ -32,6 +36,7 @@ jobs:
     with:
       arch: ${{ matrix.arch }}
       os: ${{ inputs.runner }}
+      resume-run-id: ${{ inputs.resume-run-id }}
 
   release:
     needs: build

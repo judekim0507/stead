@@ -16,6 +16,10 @@ on:
       os:
         required: true
         type: string
+      resume-run-id:
+        required: false
+        type: string
+        default: ""
     outputs:
       status:
         value: ${{ jobs.build_job.outputs.status }}
@@ -33,11 +37,26 @@ jobs:
           submodules: true
       - uses: ./.github/actions/prepare-environment
       - name: Download resources
+        if: ${{ inputs.resume-run-id == '' }}
         uses: actions/download-artifact@v4
         with:
           name: stead_macos_resources_${{ inputs.arch }}
       - name: Unpack resources
+        if: ${{ inputs.resume-run-id == '' }}
         run: ./github_unpack_resources.sh && ls -la
+      - name: Download build archive from prior run
+        if: ${{ inputs.resume-run-id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          run-id: ${{ inputs.resume-run-id }}
+          github-token: ${{ github.token }}
+      - name: Unpack prior build archive
+        if: ${{ inputs.resume-run-id != '' }}
+        run: ./github_unpack_archive.sh
+      - name: Re-sync stead-owned sources from current patches
+        if: ${{ inputs.resume-run-id != '' }}
+        run: ./github_resync_stead.sh
       - name: Prepare for building
         run: ./github_before_build.sh ${{ inputs.arch }} | tee -a github_actions_build_${{ inputs.arch }}.log
         env:

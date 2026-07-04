@@ -627,7 +627,7 @@ index 0000000000000..71246ae8e56d
 +
 +base::DictValue CredentialRefToDict(const mojom::CredentialRef& credential) {
 +  base::DictValue out;
-+  out.Set("handle", credential.handle);
++  out.Set("handle", credential.opaque_handle);
 +  out.Set("label", credential.label);
 +  out.Set("source", credential.source);
 +  out.Set("has_totp", credential.has_totp);
@@ -641,7 +641,7 @@ index 0000000000000..71246ae8e56d
 +    return nullptr;
 +  }
 +  auto credential = mojom::CredentialRef::New();
-+  credential->handle = *handle;
++  credential->opaque_handle = *handle;
 +  credential->label = OptionalString(dict, "label");
 +  credential->source = OptionalString(dict, "source");
 +  credential->has_totp = dict.FindBool("has_totp").value_or(false);
