@@ -36,7 +36,12 @@ if [[ "$_error_code" -eq 124 ]]; then
 fi
 
 if [[ "$_error_code" -ne 0 ]]; then
-    exit "$_error_code"
+    # Preserve compile progress on failure: mark the status but exit 0 so the
+    # archive/upload steps still run; a final do-build step then fails the job.
+    # This lets the next dispatch resume from the exact failure point instead
+    # of the last successful chunk.
+    echo "status=failed" >> $GITHUB_OUTPUT
+    exit 0
 fi
 
 set -e

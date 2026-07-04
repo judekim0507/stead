@@ -1,0 +1,10 @@
+--- a/tools/metrics/histograms/metadata/page/histograms.xml
++++ b/tools/metrics/histograms/metadata/page/histograms.xml
+@@ -601,6 +601,7 @@
+   <variant name=".ReadingList"/>
+   <variant name=".ReloadButtonUI"/>
+   <variant name=".ShoppingInsightsSidePanel"/>
++  <variant name=".SteadSidebar"/>
+   <variant name=".TabSearch"/>
+   <variant name=".TabsFromOtherDevicesSidePanel"/>
+   <variant name=".UserEducation"/>

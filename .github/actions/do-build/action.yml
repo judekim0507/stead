@@ -96,3 +96,9 @@ runs:
           ${{ steps.bake.outputs.deltas }}
           ./release_asset/${{ steps.bake.outputs.file_name }}
           ./${{ steps.bake.outputs.file_name }}.hashes.md
+    - name: Fail job if compile failed (progress already archived)
+      if: ${{ steps.build.outputs.status == 'failed' }}
+      shell: bash
+      run: |
+        echo "ninja failed; the partial build tree was archived for resume."
+        exit 1
