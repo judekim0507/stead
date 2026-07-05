@@ -7500,24 +7500,24 @@ index 0000000000000..c1c7d850f8a48
 +
 +#endif  // CHROME_BROWSER_UI_STEAD_AGENT_CONTROL_STEAD_AGENT_CONTROL_SERVICE_H_
 diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-index a261ec7..c90440a 100644
+index 525a910..34ee0fe 100644
 --- a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -5,3 +5,5 @@
+@@ -4,7 +4,10 @@
+ 
  #include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
--
-+
+ 
 +#include <utility>
 +
- #include "base/containers/span.h"
-@@ -8,2 +9,3 @@
  #include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
  #include "chrome/common/webui_url_constants.h"
-@@ -49,3 +51,9 @@
+ #include "chrome/grit/stead_sidebar_resources.h"
+ #include "chrome/grit/stead_sidebar_resources_map.h"
+@@ -46,4 +49,10 @@ SteadSidebarUI::SteadSidebarUI(content::WebUI* web_ui)
+ 
  SteadSidebarUI::~SteadSidebarUI() = default;
--
-+
+ 
 +void SteadSidebarUI::BindInterface(
 +    mojo::PendingReceiver<stead::mojom::ControlConsole> receiver) {
 +  stead::SteadAgentControlServiceFactory::BindControlConsole(
@@ -7529,49 +7529,59 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
 index 7fcf386..c3bde7b 100644
 --- a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
-@@ -8,3 +8,4 @@
+@@ -7,11 +7,13 @@
+ 
  #include <string_view>
--
-+
+ 
 +#include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
  #include "chrome/browser/ui/webui/top_chrome/top_chrome_web_ui_controller.h"
-@@ -14,3 +15,4 @@
+ #include "chrome/browser/ui/webui/top_chrome/top_chrome_webui_config.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "content/public/browser/web_ui_controller.h"
  #include "content/public/common/url_constants.h"
--
 +#include "mojo/public/cpp/bindings/pending_receiver.h"
-+
+ 
  class SteadSidebarUI;
-@@ -41,3 +43,6 @@
+ 
+@@ -37,6 +39,9 @@ class SteadSidebarUI : public TopChromeWebUIController {
+   SteadSidebarUI& operator=(const SteadSidebarUI&) = delete;
    ~SteadSidebarUI() override;
--
-+
+ 
 +  void BindInterface(
 +      mojo::PendingReceiver<stead::mojom::ControlConsole> receiver);
 +
    static constexpr std::string_view GetWebUIName() { return "SteadSidebar"; }
+ 
+  private:
 diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
-index b48e200..ddebcd9 100644
+index afd8581..d9e5b93 100644
 --- a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
 +++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
-@@ -5,3 +5,5 @@
+@@ -4,7 +4,10 @@
+ 
  #include "chrome/browser/ui/webui/stead_chat/stead_chat_ui.h"
--
-+
+ 
 +#include <utility>
 +
- #include "base/containers/span.h"
-@@ -8,2 +9,3 @@
  #include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
  #include "chrome/common/webui_url_constants.h"
-@@ -20,2 +22,3 @@
+ // Reuses the shared Stead WebUI SPA bundle (same pak as the sidebar surface).
+ #include "chrome/grit/stead_sidebar_resources.h"
+@@ -16,7 +19,8 @@
+ #include "services/network/public/mojom/content_security_policy.mojom.h"
+ #include "ui/webui/webui_util.h"
+ 
 -SteadChatUI::SteadChatUI(content::WebUI* web_ui) : WebUIController(web_ui) {
 +SteadChatUI::SteadChatUI(content::WebUI* web_ui)
 +    : ui::MojoWebUIController(web_ui) {
    content::BrowserContext* browser_context =
-@@ -49,1 +52,9 @@
--SteadChatUI::~SteadChatUI() = default;
-+SteadChatUI::~SteadChatUI() = default;
+       web_ui->GetWebContents()->GetBrowserContext();
+   Profile* profile = Profile::FromBrowserContext(browser_context);
+@@ -46,3 +50,11 @@ SteadChatUI::SteadChatUI(content::WebUI* web_ui) : WebUIController(web_ui) {
+ }
+ 
+ SteadChatUI::~SteadChatUI() = default;
 +
 +void SteadChatUI::BindInterface(
 +    mojo::PendingReceiver<stead::mojom::ControlConsole> receiver) {
@@ -7584,26 +7594,31 @@ diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h b/chrome/browser
 index 2db14f4..920a0f1 100644
 --- a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h
 +++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h
-@@ -6,3 +6,4 @@
+@@ -5,10 +5,12 @@
+ #ifndef CHROME_BROWSER_UI_WEBUI_STEAD_CHAT_STEAD_CHAT_UI_H_
  #define CHROME_BROWSER_UI_WEBUI_STEAD_CHAT_STEAD_CHAT_UI_H_
--
-+
+ 
 +#include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
  #include "chrome/common/webui_url_constants.h"
-@@ -9,5 +10,6 @@
 -#include "content/public/browser/web_ui_controller.h"
  #include "content/public/browser/webui_config.h"
  #include "content/public/common/url_constants.h"
--
 +#include "mojo/public/cpp/bindings/pending_receiver.h"
 +#include "ui/webui/mojo_web_ui_controller.h"
-+
+ 
  class SteadChatUI;
-@@ -26,2 +28,2 @@
+ 
+@@ -23,13 +25,19 @@ class SteadChatUIConfig : public content::DefaultWebUIConfig<SteadChatUI> {
+ 
+ // Full-page Stead chat. Serves the same SvelteKit SPA bundle as the sidebar
+ // (stead_sidebar_resources.pak), opened at the /ai-chat route.
 -class SteadChatUI : public content::WebUIController {
 +class SteadChatUI : public ui::MojoWebUIController {
   public:
-@@ -32,2 +34,8 @@
+   explicit SteadChatUI(content::WebUI* web_ui);
+ 
+   SteadChatUI(const SteadChatUI&) = delete;
+   SteadChatUI& operator=(const SteadChatUI&) = delete;
    ~SteadChatUI() override;
 +
 +  void BindInterface(
@@ -7612,29 +7627,36 @@ index 2db14f4..920a0f1 100644
 + private:
 +  WEB_UI_CONTROLLER_TYPE_DECL();
  };
+ 
+ #endif  // CHROME_BROWSER_UI_WEBUI_STEAD_CHAT_STEAD_CHAT_UI_H_
 diff --git a/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc
-index aa1d75f..e5f0edc 100644
+index 3389a32..600036a 100644
 --- a/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc
 +++ b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.cc
-@@ -5,3 +5,5 @@
+@@ -4,7 +4,10 @@
+ 
  #include "chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h"
--
-+
+ 
 +#include <utility>
 +
- #include "base/containers/span.h"
-@@ -8,2 +9,3 @@
  #include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
  #include "chrome/common/webui_url_constants.h"
-@@ -20,3 +22,3 @@
+ // Reuses the shared Stead WebUI SPA bundle (same pak as the sidebar/chat).
+ #include "chrome/grit/stead_sidebar_resources.h"
+@@ -17,7 +20,7 @@
+ #include "ui/webui/webui_util.h"
+ 
  SteadNewTabUI::SteadNewTabUI(content::WebUI* web_ui)
 -    : WebUIController(web_ui) {
 +    : ui::MojoWebUIController(web_ui) {
    content::BrowserContext* browser_context =
-@@ -47,1 +49,9 @@
--SteadNewTabUI::~SteadNewTabUI() = default;
-+SteadNewTabUI::~SteadNewTabUI() = default;
+       web_ui->GetWebContents()->GetBrowserContext();
+   Profile* profile = Profile::FromBrowserContext(browser_context);
+@@ -44,3 +47,11 @@ SteadNewTabUI::SteadNewTabUI(content::WebUI* web_ui)
+ }
+ 
+ SteadNewTabUI::~SteadNewTabUI() = default;
 +
 +void SteadNewTabUI::BindInterface(
 +    mojo::PendingReceiver<stead::mojom::ControlConsole> receiver) {
@@ -7647,26 +7669,31 @@ diff --git a/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h b/chrome/bro
 index 6e69dc1..5f722cc 100644
 --- a/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h
 +++ b/chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h
-@@ -6,3 +6,4 @@
+@@ -5,10 +5,12 @@
+ #ifndef CHROME_BROWSER_UI_WEBUI_STEAD_NEWTAB_STEAD_NEWTAB_UI_H_
  #define CHROME_BROWSER_UI_WEBUI_STEAD_NEWTAB_STEAD_NEWTAB_UI_H_
--
-+
+ 
 +#include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
  #include "chrome/common/webui_url_constants.h"
-@@ -9,5 +10,6 @@
 -#include "content/public/browser/web_ui_controller.h"
  #include "content/public/browser/webui_config.h"
  #include "content/public/common/url_constants.h"
--
 +#include "mojo/public/cpp/bindings/pending_receiver.h"
 +#include "ui/webui/mojo_web_ui_controller.h"
-+
+ 
  class SteadNewTabUI;
-@@ -26,2 +28,2 @@
+ 
+@@ -23,13 +25,19 @@ class SteadNewTabUIConfig : public content::DefaultWebUIConfig<SteadNewTabUI> {
+ };
+ 
+ // Serves the shared Stead WebUI SPA bundle, opened at the /new-tab route.
 -class SteadNewTabUI : public content::WebUIController {
 +class SteadNewTabUI : public ui::MojoWebUIController {
   public:
-@@ -32,2 +34,8 @@
+   explicit SteadNewTabUI(content::WebUI* web_ui);
+ 
+   SteadNewTabUI(const SteadNewTabUI&) = delete;
+   SteadNewTabUI& operator=(const SteadNewTabUI&) = delete;
    ~SteadNewTabUI() override;
 +
 +  void BindInterface(
@@ -7675,6 +7702,8 @@ index 6e69dc1..5f722cc 100644
 + private:
 +  WEB_UI_CONTROLLER_TYPE_DECL();
  };
+ 
+ #endif  // CHROME_BROWSER_UI_WEBUI_STEAD_NEWTAB_STEAD_NEWTAB_UI_H_
 diff --git a/components/javascript_dialogs/tab_modal_dialog_manager.cc b/components/javascript_dialogs/tab_modal_dialog_manager.cc
 index b275a7050d5c3..6ac34da172054 100644
 --- a/components/javascript_dialogs/tab_modal_dialog_manager.cc

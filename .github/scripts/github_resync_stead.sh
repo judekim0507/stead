@@ -40,8 +40,10 @@ set -- \
   --include='chrome/browser/resources/stead_sidebar/*'
 
 grep -E '^stead/' "$_root_dir/patches/series" | while read -r _p; do
-  (cd "$_tmp" && git apply "$@" "$_root_dir/patches/$_p") \
-    || echo "note: no stead-created files in $_p" >&2
+  if ! (cd "$_tmp" && git apply "$@" "$_root_dir/patches/$_p"); then
+    echo "error: failed to resync stead-created files from $_p" >&2
+    exit 1
+  fi
 done
 
 _count=0

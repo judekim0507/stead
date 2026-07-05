@@ -1,3 +1,5 @@
+diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h
+new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.h
 @@ -0,0 +1,35 @@
@@ -36,9 +38,11 @@
 +};
 +
 +#endif  // CHROME_BROWSER_UI_WEBUI_STEAD_CHAT_STEAD_CHAT_UI_H_
+diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
+new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,48 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
