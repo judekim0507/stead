@@ -30,11 +30,14 @@ def main() -> int:
         return 2
     bundle_dir, out_grd = sys.argv[1], sys.argv[2]
     grd_dir = os.path.dirname(os.path.abspath(out_grd))
+    out_grd_abs = os.path.abspath(out_grd)
 
     files = []
     for root, _, names in os.walk(bundle_dir):
         for name in names:
             abs_path = os.path.join(root, name)
+            if name == 'BUILD.gn' or os.path.abspath(abs_path) == out_grd_abs:
+                continue
             # Path as served under the WebUI host (and the grit map key).
             rel = os.path.relpath(abs_path, bundle_dir).replace(os.sep, '/')
             # Path grit reads from, relative to the .grd location.
