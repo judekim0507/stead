@@ -815,7 +815,7 @@ new file mode 100644
 index 0000000000000..7a3e021c74dab
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
-@@ -0,0 +1,6285 @@
+@@ -0,0 +1,6284 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -864,7 +864,6 @@ index 0000000000000..7a3e021c74dab
 +#include "components/javascript_dialogs/tab_modal_dialog_manager.h"
 +#include "components/permissions/permission_request.h"
 +#include "components/permissions/permission_request_manager.h"
-+#include "components/permissions/permission_uma_constants.h"
 +#include "components/permissions/request_type.h"
 +#include "components/password_manager/core/browser/password_form.h"
 +#include "components/password_manager/core/browser/password_form_digest.h"
