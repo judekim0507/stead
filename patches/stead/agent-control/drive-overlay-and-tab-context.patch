@@ -130,13 +130,13 @@ index 46fb0fb..d3be4ca 100644
  
 +void SteadAgentControlService::GetActiveTabContext(
 +    GetActiveTabContextCallback callback) {
-+  Browser* browser = chrome::FindLastActiveWithProfile(profile_);
-+  if (!browser || !browser->tab_strip_model()) {
++  BrowserWindowInterface* browser = chrome::FindLastActiveWithProfile(profile_);
++  if (!browser || !browser->GetTabStripModel()) {
 +    std::move(callback).Run(nullptr);
 +    return;
 +  }
 +  content::WebContents* contents =
-+      browser->tab_strip_model()->GetActiveWebContents();
++      browser->GetTabStripModel()->GetActiveWebContents();
 +  if (!contents) {
 +    std::move(callback).Run(nullptr);
 +    return;

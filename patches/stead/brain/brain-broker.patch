@@ -302,6 +302,7 @@ index 0000000000000..962a5a6a98f8
 +#include "base/process/process.h"
 +#include "base/task/sequenced_task_runner.h"
 +#include "base/values.h"
++#include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
 +#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
 +#include "components/keyed_service/core/keyed_service.h"
 +#include "mojo/public/cpp/bindings/receiver_set.h"
@@ -956,7 +957,7 @@ index 0000000000000..71246ae8e56d
 +    return;
 +  }
 +  std::optional<base::DictValue> content =
-+      base::JSONReader::ReadDict(response_json);
++      base::JSONReader::ReadDict(response_json, base::JSON_PARSE_RFC);
 +  if (!content) {
 +    std::move(callback).Run(MakeResult(
 +        false, request_id, "invalid_prompt_response",
@@ -1141,7 +1142,8 @@ index 0000000000000..71246ae8e56d
 +}
 +
 +void SteadBrainService::OnBrainLine(std::string line) {
-+  std::optional<base::DictValue> event = base::JSONReader::ReadDict(line);
++  std::optional<base::DictValue> event =
++      base::JSONReader::ReadDict(line, base::JSON_PARSE_RFC);
 +  if (!event) {
 +    base::DictValue error;
 +    error.Set("type", "error");
@@ -1474,7 +1476,7 @@ index 0000000000000..71246ae8e56d
 +            [](base::WeakPtr<SteadBrainService> service,
 +               std::string session_id, std::string tool_call_id,
 +               mojom::ActionResultPtr result,
-+               std::optional<std::string> json_result) {
++               const std::optional<std::string>& json_result) {
 +              if (!service) {
 +                return;
 +              }

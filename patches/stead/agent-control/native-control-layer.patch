@@ -864,6 +864,7 @@ index 0000000000000..7a3e021c74dab
 +#include "components/javascript_dialogs/tab_modal_dialog_manager.h"
 +#include "components/permissions/permission_request.h"
 +#include "components/permissions/permission_request_manager.h"
++#include "components/permissions/permission_uma_util.h"
 +#include "components/permissions/request_type.h"
 +#include "components/password_manager/core/browser/password_form.h"
 +#include "components/password_manager/core/browser/password_form_digest.h"
@@ -1056,13 +1057,14 @@ index 0000000000000..7a3e021c74dab
 +  bool send_char = false;
 +};
 +
-+std::string LowerAscii(std::string text) {
-+  for (char& c : text) {
++std::string LowerAscii(std::string_view text) {
++  std::string lowered(text);
++  for (char& c : lowered) {
 +    if (c >= 'A' && c <= 'Z') {
 +      c = c - 'A' + 'a';
 +    }
 +  }
-+  return text;
++  return lowered;
 +}
 +
 +bool ContainsAny(std::string_view text,
@@ -1662,7 +1664,7 @@ index 0000000000000..7a3e021c74dab
 +    const std::vector<std::string>& paths) {
 +  std::string material = handle;
 +  for (const std::string& path : paths) {
-+    material.push_back('\\0');
++    material.push_back('\0');
 +    material.append(path);
 +  }
 +  const auto digest = crypto::hash::Sha256(material);
@@ -2221,8 +2223,7 @@ index 0000000000000..7a3e021c74dab
 +
 +class SteadAgentControlService::PrivateBrowserControl {
 + public:
-+  explicit PrivateBrowserControl(SteadAgentControlService* broker)
-+      : broker_(broker) {}
++  explicit PrivateBrowserControl(SteadAgentControlService* broker);
 +
 +  PrivateBrowserControl(const PrivateBrowserControl&) = delete;
 +  PrivateBrowserControl& operator=(const PrivateBrowserControl&) = delete;
@@ -2981,6 +2982,10 @@ index 0000000000000..7a3e021c74dab
 +  base::flat_map<uint32_t, DownloadEmissionState> download_emissions_;
 +};
 +
++SteadAgentControlService::PrivateBrowserControl::PrivateBrowserControl(
++    SteadAgentControlService* broker)
++    : broker_(broker) {}
++
 +SteadAgentControlService::PrivateBrowserControl::~PrivateBrowserControl() =
 +    default;
 +
@@ -3167,8 +3172,8 @@ index 0000000000000..7a3e021c74dab
 +
 +void SteadAgentControlService::CompleteAuthHintProbe(
 +    std::unique_ptr<ListTabsAuthState> state,
-+    std::vector<network::mojom::CookieWithAccessResultPtr> cookies,
-+    std::vector<network::mojom::CookieWithAccessResultPtr>
++    const std::vector<net::CookieWithAccessResult>& cookies,
++    const std::vector<net::CookieWithAccessResult>&
 +        /*excluded_cookies*/) {
 +  if (!state) {
 +    return;
@@ -7134,6 +7139,7 @@ index 0000000000000..c1c7d850f8a48
 +#include "mojo/public/cpp/bindings/pending_remote.h"
 +#include "mojo/public/cpp/bindings/receiver_set.h"
 +#include "mojo/public/cpp/bindings/remote_set.h"
++#include "net/cookies/cookie_access_result.h"
 +#include "services/network/public/mojom/cookie_manager.mojom.h"
 +#include "content/public/common/javascript_dialog_type.h"
 +#include "ui/accessibility/ax_enums.mojom-forward.h"
@@ -7315,8 +7321,8 @@ index 0000000000000..c1c7d850f8a48
 +  void PopulateNextAuthHintProbe(std::unique_ptr<ListTabsAuthState> state);
 +  void CompleteAuthHintProbe(
 +      std::unique_ptr<ListTabsAuthState> state,
-+      std::vector<network::mojom::CookieWithAccessResultPtr> cookies,
-+      std::vector<network::mojom::CookieWithAccessResultPtr>
++      const std::vector<net::CookieWithAccessResult>& cookies,
++      const std::vector<net::CookieWithAccessResult>&
 +          excluded_cookies);
 +
 +  void FinishSnapshot(int32_t tab_id,
@@ -7447,10 +7453,10 @@ index 0000000000000..c1c7d850f8a48
 +      bool ok,
 +      const std::string& code,
 +      const std::string& message,
-+      bool stale,
-+      bool needs_snapshot,
-+      bool needs_confirmation,
-+      bool target_missing,
++      bool stale = false,
++      bool needs_snapshot = false,
++      bool needs_confirmation = false,
++      bool target_missing = false,
 +      const std::string& blocked_by = std::string(),
 +      uint32_t new_generation = 0) const;
 +
