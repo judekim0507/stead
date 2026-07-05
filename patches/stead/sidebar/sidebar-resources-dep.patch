@@ -1,0 +1,10 @@
+--- a/chrome/browser/resources/BUILD.gn
++++ b/chrome/browser/resources/BUILD.gn
+@@ -84,6 +84,7 @@
+       "side_panel/shared:resources",
+       "side_panel/tabs_from_other_devices:resources",
+       "signin:resources",
++      "stead_sidebar:resources",
+       "suggest_internals:resources",
+       "support_tool:resources",
+       "tab_group_home:resources",
