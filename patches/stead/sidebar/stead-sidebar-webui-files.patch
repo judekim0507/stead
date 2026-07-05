@@ -56,7 +56,6 @@
 +
 +#include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
 +
-+#include "base/containers/span.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/common/webui_url_constants.h"
 +#include "chrome/grit/stead_sidebar_resources.h"
@@ -75,7 +74,7 @@
 +  // Packs index.html + the hashed _app/* assets, and makes index.html the
 +  // default resource so any in-app route the side panel opens (e.g.
 +  // /ai-sidebar) falls back to the SPA shell and SvelteKit's router renders it.
-+  webui::SetupWebUIDataSource(source, base::make_span(kSteadSidebarResources),
++  webui::SetupWebUIDataSource(source, kSteadSidebarResources,
 +                              IDR_STEAD_SIDEBAR_INDEX_HTML);
 +
 +  // The SvelteKit shell bootstraps with an inline <script> and the app uses

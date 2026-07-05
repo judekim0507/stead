@@ -45,7 +45,6 @@
 +
 +#include "chrome/browser/ui/webui/stead_newtab/stead_newtab_ui.h"
 +
-+#include "base/containers/span.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/common/webui_url_constants.h"
 +// Reuses the shared Stead WebUI SPA bundle (same pak as the sidebar/chat).
@@ -68,7 +67,7 @@
 +
 +  // Serve the PRERENDERED /new-tab page as the default resource, so a new tab
 +  // paints the real UI instantly (zero JS) and the client just hydrates it.
-+  webui::SetupWebUIDataSource(source, base::make_span(kSteadSidebarResources),
++  webui::SetupWebUIDataSource(source, kSteadSidebarResources,
 +                              IDR_STEAD_SIDEBAR_NEW_TAB_HTML);
 +
 +  source->OverrideContentSecurityPolicy(

@@ -45,7 +45,6 @@
 +
 +#include "chrome/browser/ui/webui/stead_chat/stead_chat_ui.h"
 +
-+#include "base/containers/span.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/common/webui_url_constants.h"
 +// Reuses the shared Stead WebUI SPA bundle (same pak as the sidebar surface).
@@ -68,7 +67,7 @@
 +  // index.html is the default resource, so the /ai-chat client route (and any
 +  // other in-app route) falls back to the SPA shell and the SvelteKit router
 +  // renders it.
-+  webui::SetupWebUIDataSource(source, base::make_span(kSteadSidebarResources),
++  webui::SetupWebUIDataSource(source, kSteadSidebarResources,
 +                              IDR_STEAD_SIDEBAR_INDEX_HTML);
 +
 +  // Same relaxations the sidebar needs: SvelteKit's inline bootstrap script +

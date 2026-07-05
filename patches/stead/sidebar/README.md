@@ -110,8 +110,8 @@ cleanly rather than with fuzz. Counts are verified. Still confirm at first build
 - **`resource_ids.spec` id.** Uses `includes: [9500]`, size `60`. grit validates
   ranges at build and prints a free range if it collides — adjust then.
 - **grit resource-map symbol.** The data source uses
-  `base::make_span(kSteadSidebarResources)`; confirm that's the array name grit
-  emits in `stead_sidebar_resources_map.h` (adjust if it differs).
+  `kSteadSidebarResources`; confirm that's the array name grit emits in
+  `stead_sidebar_resources_map.h` (adjust if it differs).
 - **`.top-chrome` host registration.** Confirm the side panel's
   `WebUIContentsWrapperT<SteadSidebarUI>` resolves `chrome://sidebar.top-chrome/`
   (host must match `kSteadSidebarHost`).
