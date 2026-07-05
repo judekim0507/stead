@@ -70,7 +70,7 @@ def main() -> int:
         lines.append(
             f'      <include name="{idr_name(rel)}" '
             f'file="{file_attr}" resource_path="{rel}" '
-            f'use_base_dir="false" type="BINDATA" />'
+            f'type="BINDATA" />'
         )
     lines += [
         '    </includes>',
