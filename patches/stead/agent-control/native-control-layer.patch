@@ -815,7 +815,7 @@ new file mode 100644
 index 0000000000000..7a3e021c74dab
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
-@@ -0,0 +1,6289 @@
+@@ -0,0 +1,6291 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1676,23 +1676,25 @@ index 0000000000000..7a3e021c74dab
 +}
 +
 +std::string PermissionActionToString(permissions::PermissionAction action) {
-+  switch (action) {
-+    case permissions::PermissionAction::GRANTED:
++  // PermissionAction values are persisted UMA values. Some Chromium revisions
++  // expose only the opaque enum type from public prompt headers, so avoid
++  // depending on the defining constants header here.
++  switch (static_cast<int>(action)) {
++    case 0:
 +      return "granted";
-+    case permissions::PermissionAction::DENIED:
++    case 1:
 +      return "denied";
-+    case permissions::PermissionAction::DISMISSED:
++    case 2:
 +      return "dismissed";
-+    case permissions::PermissionAction::IGNORED:
++    case 3:
 +      return "ignored";
-+    case permissions::PermissionAction::REVOKED:
++    case 4:
 +      return "revoked";
-+    case permissions::PermissionAction::GRANTED_ONCE:
++    case 5:
 +      return "granted_once";
-+    case permissions::PermissionAction::NUM:
++    default:
 +      return "unknown";
 +  }
-+  return "unknown";
 +}
 +
 +mojom::PermissionPromptInfoPtr BuildPermissionPromptInfo(
