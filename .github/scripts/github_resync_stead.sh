@@ -81,4 +81,54 @@ grep -E '^stead/' "$_root_dir/patches/series" | while read -r _p; do
   fi
 done
 
+# Older resumed archives may contain partial hunks from the disabled
+# stead/settings/agent-settings-page.patch. Those hunks are intentionally no
+# longer in patches/series, but `patch -N` cannot reverse already-present shared
+# file edits from the archive. Normalize the affected binder file before ninja
+# sees it.
+_binder="$_src_dir/chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc"
+if [ -f "$_binder" ]; then
+  python3 - "$_binder" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+original = text
+
+text = text.replace(
+    "                                         SteadNewTabUI,\n"
+    "                                         settings::SettingsUI>(map);",
+    "                                         SteadNewTabUI>(map);",
+)
+text = text.replace(
+    "      .Add<help_bubble::mojom::HelpBubbleHandlerFactory>()\n"
+    "      .Add<stead::mojom::BrainConsole>();",
+    "      .Add<help_bubble::mojom::HelpBubbleHandlerFactory>();",
+)
+text = re.sub(
+    r"\nvoid RegisterWebUIBrowserInterfaceBindersForSteadSettings\([^{}]*\)\s*\{"
+    r".*?\n\}\n",
+    "\n",
+    text,
+    flags=re.S,
+)
+
+trusted = "void PopulateChromeWebUIFrameInterfaceBrokersTrustedPartsDesktop("
+untrusted = "\nvoid PopulateChromeWebUIFrameInterfaceBrokersUntrustedPartsDesktop("
+trusted_at = text.find(trusted)
+untrusted_at = text.find(untrusted, trusted_at)
+if trusted_at != -1 and untrusted_at != -1:
+    chunk = text[trusted_at:untrusted_at]
+    missing_closes = chunk.count("{") - chunk.count("}")
+    if missing_closes > 0:
+        text = text[:untrusted_at] + "\n" + ("}\n" * missing_closes) + text[untrusted_at:]
+
+if text != original:
+    path.write_text(text)
+    print("normalized stale Stead settings WebUI binder hunks")
+PY
+fi
+
 echo "stead resync complete"
