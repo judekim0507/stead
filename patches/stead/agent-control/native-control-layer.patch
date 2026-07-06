@@ -815,7 +815,7 @@ new file mode 100644
 index 0000000000000..7a3e021c74dab
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
-@@ -0,0 +1,6284 @@
+@@ -0,0 +1,6289 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -7110,7 +7110,7 @@ new file mode 100644
 index 0000000000000..c1c7d850f8a48
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,394 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.

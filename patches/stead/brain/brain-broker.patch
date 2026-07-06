@@ -281,7 +281,7 @@ new file mode 100644
 index 0000000000000..962a5a6a98f8
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.h
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,139 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -426,7 +426,7 @@ new file mode 100644
 index 0000000000000..71246ae8e56d
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
-@@ -0,0 +1,1373 @@
+@@ -0,0 +1,1374 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
