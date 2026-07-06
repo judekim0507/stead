@@ -88,7 +88,7 @@ runs:
         path: upload_logs/
         overwrite: true
     - name: Upload disk-image and hash file as artifact after build
-      if: ${{ steps.build.outputs.status == 'finished' }}
+      if: ${{ steps.build.outputs.status == 'finished' && steps.bake.outputs.packaging_status == 'finished' }}
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.bake.outputs.file_name }}
@@ -96,6 +96,12 @@ runs:
           ${{ steps.bake.outputs.deltas }}
           ./release_asset/${{ steps.bake.outputs.file_name }}
           ./${{ steps.bake.outputs.file_name }}.hashes.md
+    - name: Fail job if artifact packaging failed
+      if: ${{ steps.bake.outputs.packaging_status == 'failed' }}
+      shell: bash
+      run: |
+        echo "artifact packaging failed; the completed build tree was archived for resume."
+        exit 1
     - name: Fail job if compile failed (progress already archived)
       if: ${{ steps.build.outputs.status == 'failed' }}
       shell: bash
