@@ -42,6 +42,8 @@ jobs:
           name: github_build_artifact_${{ inputs.arch }}
       - name: Unpack archive of build
         run: ./github_unpack_archive.sh
+      - name: Normalize resumed Chromium sources
+        run: ./github_normalize_chromium_sources.sh
       - uses: ./.github/actions/do-build
         id: build
         with:

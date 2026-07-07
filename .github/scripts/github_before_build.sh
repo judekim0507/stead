@@ -34,6 +34,7 @@ echo 'chrome_pgo_phase=2' >> "$_src_dir/out/Default/args.gn"
 # rule added by patches/stead can pack stead_sidebar_resources.pak. build.sh
 # does this for local builds; the CI pipeline must do it too.
 "$_root_dir/resources/stead/install_sidebar_to_tree.sh" "$_src_dir"
+"$_root_dir/github_normalize_chromium_sources.sh" "$_src_dir"
 
 cd "$_src_dir"
 
