@@ -123,6 +123,8 @@ ___helium_name_substitution() {
     if [ "$1" = "nameunsub" ]; then
         python3 "$_root_dir/devutils/stead_name_substitution.py" --unsub \
             -t "$_src_dir" --backup-path "$_namesubs_cache"
+        python3 "$_root_dir/devutils/stead_protocol_substitution.py" \
+            -t "$_src_dir" --revert
     elif [ "$1" = "namesub" ]; then
         if [ -f "$_namesubs_cache" ]; then
             echo "$_namesubs_cache exists, are you sure you want to do this?" >&2
@@ -132,6 +134,8 @@ ___helium_name_substitution() {
 
         python3 "$_root_dir/devutils/stead_name_substitution.py" --sub \
             -t "$_src_dir" --backup-path "$_namesubs_cache"
+        python3 "$_root_dir/devutils/stead_protocol_substitution.py" \
+            -t "$_src_dir"
     else
         echo "unknown action: $1" >&2
         return
