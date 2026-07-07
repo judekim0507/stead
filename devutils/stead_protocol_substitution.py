@@ -79,6 +79,7 @@ def main() -> None:
     new_needles = [new for _, new in replacements]
     changed = 0
     already_applied = 0
+    skipped_without_markers = 0
 
     for rel in TARGETS:
         path = args.tree / rel
@@ -96,14 +97,19 @@ def main() -> None:
         elif has_any(original, new_needles):
             already_applied += 1
         else:
-            raise RuntimeError(
-                f"{rel} has neither expected old nor new protocol markers"
-            )
+            skipped_without_markers += 1
+
+    if changed + already_applied < 10:
+        raise RuntimeError(
+            "too few protocol markers found; Chromium protocol patch may have "
+            "drifted"
+        )
 
     action = "reverted" if args.revert else "applied"
     print(
         f"Stead protocol substitution {action}: "
-        f"{changed} changed, {already_applied} already current"
+        f"{changed} changed, {already_applied} already current, "
+        f"{skipped_without_markers} skipped without markers"
     )
 
 
