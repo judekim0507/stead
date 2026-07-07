@@ -9,7 +9,15 @@
 
 set -eux
 
-_script_dir="$(dirname "$(greadlink -f "$0")")"   # resources/stead
+_resolve_path() {
+  if command -v greadlink >/dev/null 2>&1; then
+    greadlink -f "$1"
+  else
+    python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
+  fi
+}
+
+_script_dir="$(dirname "$(_resolve_path "$0")")" # resources/stead
 _root_dir="$(dirname "$(dirname "$_script_dir")")" # repo root
 _ui_dir="${STEAD_UI_DIR:-$_root_dir/../ui}"
 _dest="$_script_dir/sidebar"

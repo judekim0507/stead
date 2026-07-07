@@ -33,6 +33,8 @@ _STEAD_REGEXES_STR = [
     (r'(?:Google )?Chrom(e|ium)(?!\w)', r'Stead'),
     # Helium-origin names (inherited from the upstream patch tree) -> Stead
     (r'(\b)helium://', r'\1stead://'),
+    (r'"helium"', r'"stead"'),
+    (r"'helium:'", r"'stead:'"),
     (r'Helium', r'Stead'),
     # restore the protected names
     (r'((?:Google )?Chrom(e|ium))_unreplace', r'\1'),
@@ -52,6 +54,9 @@ def _stead_sanity():
         ('Google Chrome', 'Stead'),
         ('Chromium', 'Stead'),
         ('helium://about', 'stead://about'),
+        ('content::kHeliumUIScheme[] = "helium";',
+         'content::kSteadUIScheme[] = "stead";'),
+        ('protocol === \'helium:\'', 'protocol === \'stead:\''),
         ('Helium services', 'Stead services'),
     ]
     for src, expected in cases:

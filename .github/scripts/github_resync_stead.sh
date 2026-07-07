@@ -81,6 +81,7 @@ grep -E '^stead/' "$_root_dir/patches/series" | while read -r _p; do
   fi
 done
 
+python3 "$_root_dir/devutils/stead_name_substitution.py" --sub -t "$_src_dir"
 "$_root_dir/github_normalize_chromium_sources.sh" "$_src_dir"
 
 echo "stead resync complete"
