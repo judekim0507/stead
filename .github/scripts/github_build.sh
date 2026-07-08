@@ -16,6 +16,11 @@ fi
 
 cd "$_src_dir"
 
+# A resumed archive can contain a completion marker from an older successful
+# chunk. Clear it before ninja so failed resumed chunks cannot package/upload a
+# stale app as if this run finished.
+rm -f "$_root_dir/build_finished_$_target_cpu.log"
+
 echo $(date +%s) | tee -a "$_root_dir/build_times_$_target_cpu.log"
 echo "status=running" >> $GITHUB_OUTPUT
 

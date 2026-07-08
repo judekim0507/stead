@@ -41,7 +41,22 @@ TARGETS = [
 FORWARD_REPLACEMENTS = [
     ("kHeliumUIScheme", "kSteadUIScheme"),
     ("HeliumUIScheme", "SteadUIScheme"),
-    ("helium", "stead"),
+    ("helium_scheme", "stead_scheme"),
+    ("// helium:", "// stead:"),
+    ('"helium"', '"stead"'),
+    ('u"helium"', 'u"stead"'),
+    ("'helium:'", "'stead:'"),
+    ("'helium://'", "'stead://'"),
+]
+
+# A previous broad lowercase replacement corrupted unrelated Helium layout
+# includes in files that also carry protocol hunks. Repair those archives before
+# checking/applying the narrower protocol replacements above.
+FORWARD_REPAIRS = [
+    (
+        "chrome/browser/ui/stead/stead_layout_state_controller.h",
+        "chrome/browser/ui/helium/helium_layout_state_controller.h",
+    ),
 ]
 
 
@@ -73,11 +88,14 @@ def main() -> None:
         raise ValueError(f"wrong src directory: {args.tree}")
 
     replacements = FORWARD_REPLACEMENTS
+    repairs = FORWARD_REPAIRS
     if args.revert:
         replacements = [(new, old) for old, new in reversed(FORWARD_REPLACEMENTS)]
+        repairs = []
 
     new_needles = [new for _, new in replacements]
     changed = 0
+    repaired = 0
     already_applied = 0
     skipped_without_markers = 0
 
@@ -87,10 +105,13 @@ def main() -> None:
             raise FileNotFoundError(f"expected Chromium source file missing: {rel}")
 
         original = path.read_text(encoding="utf-8")
-        updated = apply_replacements(original, replacements)
+        repaired_text = apply_replacements(original, repairs)
+        updated = apply_replacements(repaired_text, replacements)
 
         if updated != original:
             changed += 1
+            if repaired_text != original:
+                repaired += 1
             if not args.dry_run:
                 path.write_text(updated, encoding="utf-8")
             print(f"rewrote Stead protocol source: {rel}")
@@ -108,7 +129,8 @@ def main() -> None:
     action = "reverted" if args.revert else "applied"
     print(
         f"Stead protocol substitution {action}: "
-        f"{changed} changed, {already_applied} already current, "
+        f"{changed} changed, {repaired} repaired, "
+        f"{already_applied} already current, "
         f"{skipped_without_markers} skipped without markers"
     )
 
