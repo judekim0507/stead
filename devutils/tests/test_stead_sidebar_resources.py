@@ -21,11 +21,10 @@ class SteadSidebarResourcesTest(unittest.TestCase):
             text = out_grd.read_text(encoding="utf-8")
             self.assertIn('resource_path="index.html"', text)
             self.assertNotIn("BUILD.gn", text)
-            self.assertIn(
-                '<part file="${root_gen_dir}/chrome/browser/resources/'
-                'stead_sidebar/resources.grdp" />',
-                text,
-            )
+            self.assertIn('resource_path="agent_control.mojom-webui.js"', text)
+            self.assertIn('resource_path="brain_console.mojom-webui.js"', text)
+            self.assertIn("${root_gen_dir}/chrome/browser/resources/stead_sidebar/tsc/", text)
+            self.assertNotIn("<part ", text)
 
     def test_sidebar_build_patch_compiles_and_packs_mojo_modules(self):
         repo_root = Path(__file__).resolve().parents[2]
@@ -35,10 +34,9 @@ class SteadSidebarResourcesTest(unittest.TestCase):
         self.assertNotIn('build_webui("build")', text)
         self.assertIn('import("//tools/typescript/ts_library.gni")', text)
         self.assertIn('import("//tools/typescript/webui_path_mappings.gni")', text)
-        self.assertIn('import("//ui/webui/resources/tools/generate_grd.gni")', text)
         self.assertIn('preprocess_if_expr("copy_mojo_ts")', text)
         self.assertIn('ts_library("build_ts")', text)
-        self.assertIn('generate_grd("build_grdp")', text)
+        self.assertIn('group("build_mojo_js")', text)
         self.assertIn(
             "//chrome/browser/ui/stead/agent_control:mojo_bindings_ts__generator",
             text,
@@ -49,10 +47,10 @@ class SteadSidebarResourcesTest(unittest.TestCase):
         )
         self.assertIn("agent_control.mojom-webui.ts", text)
         self.assertIn("brain_console.mojom-webui.ts", text)
-        self.assertIn("agent_control.mojom-webui.js|agent_control.mojom-webui.js", text)
-        self.assertIn("brain_console.mojom-webui.js|brain_console.mojom-webui.js", text)
-        self.assertIn('deps = [ ":build_grdp" ]', text)
-        self.assertIn('inputs = [ "$target_gen_dir/resources.grdp" ]', text)
+        self.assertIn("agent_control.mojom-webui.js", text)
+        self.assertIn("brain_console.mojom-webui.js", text)
+        self.assertIn('deps = [ ":build_mojo_js" ]', text)
+        self.assertIn("inputs = stead_mojo_js_outputs", text)
 
     def test_agent_control_generates_webui_mojo_bindings(self):
         repo_root = Path(__file__).resolve().parents[2]

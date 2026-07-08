@@ -72,10 +72,26 @@ def main() -> int:
             f'file="{file_attr}" resource_path="{rel}" '
             f'type="BINDATA" />'
         )
-    lines.append(
-        '      <part file="${root_gen_dir}/chrome/browser/resources/'
-        'stead_sidebar/resources.grdp" />'
-    )
+    generated_mojo_files = [
+        (
+            'IDR_STEAD_SIDEBAR_AGENT_CONTROL_MOJOM_WEBUI_JS',
+            '${root_gen_dir}/chrome/browser/resources/stead_sidebar/tsc/'
+            'chrome/browser/ui/stead/agent_control/'
+            'agent_control.mojom-webui.js',
+            'agent_control.mojom-webui.js',
+        ),
+        (
+            'IDR_STEAD_SIDEBAR_BRAIN_CONSOLE_MOJOM_WEBUI_JS',
+            '${root_gen_dir}/chrome/browser/resources/stead_sidebar/tsc/'
+            'chrome/browser/ui/stead/brain/brain_console.mojom-webui.js',
+            'brain_console.mojom-webui.js',
+        ),
+    ]
+    for name, file_attr, rel in generated_mojo_files:
+        lines.append(
+            f'      <include name="{name}" file="{file_attr}" '
+            f'resource_path="{rel}" type="chrome_html" />'
+        )
     lines += [
         '    </includes>',
         '  </release>',
