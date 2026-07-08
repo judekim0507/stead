@@ -32,9 +32,13 @@ class SteadSidebarResourcesTest(unittest.TestCase):
         patch = repo_root / "patches/stead/sidebar/stead-sidebar-webui-files.patch"
         text = patch.read_text(encoding="utf-8")
 
-        self.assertIn('import("//ui/webui/resources/tools/build_webui.gni")', text)
-        self.assertIn('build_webui("build")', text)
-        self.assertIn("generate_grdp = true", text)
+        self.assertNotIn('build_webui("build")', text)
+        self.assertIn('import("//tools/typescript/ts_library.gni")', text)
+        self.assertIn('import("//tools/typescript/webui_path_mappings.gni")', text)
+        self.assertIn('import("//ui/webui/resources/tools/generate_grd.gni")', text)
+        self.assertIn('preprocess_if_expr("copy_mojo_ts")', text)
+        self.assertIn('ts_library("build_ts")', text)
+        self.assertIn('generate_grd("build_grdp")', text)
         self.assertIn(
             "//chrome/browser/ui/stead/agent_control:mojo_bindings_ts__generator",
             text,
@@ -45,6 +49,8 @@ class SteadSidebarResourcesTest(unittest.TestCase):
         )
         self.assertIn("agent_control.mojom-webui.ts", text)
         self.assertIn("brain_console.mojom-webui.ts", text)
+        self.assertIn("agent_control.mojom-webui.js|agent_control.mojom-webui.js", text)
+        self.assertIn("brain_console.mojom-webui.js|brain_console.mojom-webui.js", text)
         self.assertIn('deps = [ ":build_grdp" ]', text)
         self.assertIn('inputs = [ "$target_gen_dir/resources.grdp" ]', text)
 
