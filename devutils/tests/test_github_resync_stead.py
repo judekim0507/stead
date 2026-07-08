@@ -28,6 +28,15 @@ class GithubResyncSteadTest(unittest.TestCase):
                     check=True,
                 )
 
+            generated_builds = [
+                "chrome/browser/resources/stead_sidebar/BUILD.gn",
+                "chrome/browser/ui/stead/agent_control/BUILD.gn",
+                "chrome/browser/ui/stead/brain/BUILD.gn",
+            ]
+            for rel in generated_builds:
+                text = (Path(tmpdirname) / rel).read_text(encoding="utf-8")
+                self.assertEqual(text.count("{"), text.count("}"), rel)
+
 
 if __name__ == "__main__":
     unittest.main()

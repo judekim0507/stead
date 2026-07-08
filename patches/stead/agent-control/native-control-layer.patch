@@ -255,7 +255,7 @@ new file mode 100644
 index 0000000000000..f9f3cf0ea8747
 --- /dev/null
 +++ b/chrome/browser/ui/stead/agent_control/BUILD.gn
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,61 @@
 +# Copyright 2026 The Stead Authors
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
