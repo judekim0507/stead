@@ -90,7 +90,8 @@ def main() -> int:
     for name, file_attr, rel in generated_mojo_files:
         lines.append(
             f'      <include name="{name}" file="{file_attr}" '
-            f'resource_path="{rel}" type="chrome_html" />'
+            f'resource_path="{rel}" type="chrome_html" '
+            f'use_base_dir="false" />'
         )
     lines += [
         '    </includes>',

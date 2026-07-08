@@ -24,6 +24,7 @@ class SteadSidebarResourcesTest(unittest.TestCase):
             self.assertIn('resource_path="agent_control.mojom-webui.js"', text)
             self.assertIn('resource_path="brain_console.mojom-webui.js"', text)
             self.assertIn("${root_gen_dir}/chrome/browser/resources/stead_sidebar/tsc/", text)
+            self.assertIn('use_base_dir="false"', text)
             self.assertNotIn("<part ", text)
 
     def test_sidebar_build_patch_compiles_and_packs_mojo_modules(self):
