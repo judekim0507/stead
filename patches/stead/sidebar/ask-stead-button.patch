@@ -1,6 +1,6 @@
 --- a/chrome/browser/ui/browser_actions.cc
 +++ b/chrome/browser/ui/browser_actions.cc
-@@ -263,6 +263,27 @@ void BrowserActions::InitializeSidePanelActions() {
+@@ -263,6 +263,29 @@ void BrowserActions::InitializeSidePanelActions() {
                        kActionSidePanelShowBookmarks, bwi, true)
            .Build());
    root_action_item_->AddChild(
@@ -11,7 +11,9 @@
 +                if (!bwi) {
 +                  return;
 +                }
-+                chrome::ShowSteadChat(bwi);
++                bwi->OpenGURL(
++                    GURL("chrome://chat/ai-chat"),
++                    WindowOpenDisposition::NEW_FOREGROUND_TAB);
 +              },
 +              bwi))
 +          .SetActionId(kActionSidePanelShowReadingList)
@@ -28,26 +30,6 @@
        SidePanelAction(SidePanelEntryId::kAboutThisSite,
                        IDS_PAGE_INFO_ABOUT_THIS_PAGE_TITLE,
                        IDS_PAGE_INFO_ABOUT_THIS_PAGE_TITLE,
---- a/chrome/browser/ui/chrome_pages.h
-+++ b/chrome/browser/ui/chrome_pages.h
-@@ -140,6 +140,7 @@ void ShowSafeBrowsingEnhancedProtectionW
-     safe_browsing::SafeBrowsingSettingReferralMethod referral_method);
- void ShowImportDialog(BrowserWindowInterface* browser);
- void ShowAboutChrome(BrowserWindowInterface* browser);
-+void ShowSteadChat(BrowserWindowInterface* browser);
- void ShowSearchEngineSettings(BrowserWindowInterface* browser);
- void ShowWebStore(BrowserWindowInterface* browser,
-                   std::string_view utm_source_value);
---- a/chrome/browser/ui/chrome_pages.cc
-+++ b/chrome/browser/ui/chrome_pages.cc
-@@ -614,2 +614,7 @@ void ShowAboutChrome(BrowserWindowInterf
-   ShowSingletonTabIgnorePathOverwriteNTP(browser, GURL(kChromeUIHelpURL));
- }
-+
-+void ShowSteadChat(BrowserWindowInterface* browser) {
-+  ShowSingletonTabIgnorePathOverwriteNTP(browser,
-+                                         GURL("chrome://chat/ai-chat"));
-+}
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -9270,6 +9270,10 @@
