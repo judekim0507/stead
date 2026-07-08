@@ -17,7 +17,7 @@
  #include "chrome/browser/ui/find_bar/find_bar.h"
  #include "chrome/browser/ui/find_bar/find_bar_controller.h"
  #include "chrome/browser/ui/global_media_controls/media_toolbar_button_controller.h"
-@@ -263,6 +266,32 @@ void BrowserActions::InitializeSidePanelActions() {
+@@ -263,6 +266,30 @@ void BrowserActions::InitializeSidePanelActions() {
                        kActionSidePanelShowBookmarks, bwi, true)
            .Build());
    root_action_item_->AddChild(
