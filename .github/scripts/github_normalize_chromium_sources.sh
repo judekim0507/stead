@@ -47,6 +47,34 @@ text = re.sub(
     flags=re.S,
 )
 
+# Some resumed source archives were captured after a stale settings rewrite
+# removed Chromium's stock settings binder while leaving the matching broker
+# entry advertised. The first settings page load then requests
+# CustomizeColorSchemeModeHandlerFactory and the renderer is killed for a bad
+# IPC message. Restore the stock binder if the broker entry is present.
+customize_broker = (
+    "customize_color_scheme_mode::mojom::\n"
+    "               CustomizeColorSchemeModeHandlerFactory"
+)
+customize_binder = (
+    "customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory"
+)
+customize_snippet = (
+    "  RegisterWebUIControllerInterfaceBinder<\n"
+    "      customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory,\n"
+    "      settings::SettingsUI>(map);\n\n"
+)
+browser_command_binder = (
+    "  RegisterWebUIControllerInterfaceBinder<\n"
+    "      browser_command::mojom::CommandHandlerFactory,"
+)
+if (
+    customize_broker in text
+    and customize_binder not in text
+    and browser_command_binder in text
+):
+    text = text.replace(browser_command_binder, customize_snippet + browser_command_binder, 1)
+
 # The automatic chained build jobs resume from archived source trees without
 # running github_resync_stead.sh. If a prior archive has the trusted WebUI binder
 # function missing its closing brace, the compile fails near the end of the

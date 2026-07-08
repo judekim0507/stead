@@ -107,23 +107,54 @@ diff --git a/chrome/browser/resources/stead_sidebar/BUILD.gn b/chrome/browser/re
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/resources/stead_sidebar/BUILD.gn
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,56 @@
 +# Copyright 2026 The Stead Authors
 +# You can use, redistribute, and/or modify this source code under
 +# the terms of the GPL-3.0 license that can be found in the LICENSE file.
 +
++import("//ui/webui/resources/tools/build_webui.gni")
 +import("//tools/grit/grit_rule.gni")
++
++# Compile the generated Stead Mojo WebUI TypeScript bindings into the
++# *.mojom-webui.js modules dynamically imported by the prebuilt Svelte bundle.
++build_webui("build") {
++  grd_prefix = "stead_sidebar"
++  generate_grdp = true
++  optimize = false
++  enable_type_aware_eslint_checks = false
++
++  mojo_files_deps = [
++    "//chrome/browser/ui/stead/agent_control:mojo_bindings_ts__generator",
++    "//chrome/browser/ui/stead/brain:mojo_bindings_ts__generator",
++  ]
++  mojo_files = [
++    "$root_gen_dir/chrome/browser/ui/stead/agent_control/agent_control.mojom-webui.ts",
++    "$root_gen_dir/chrome/browser/ui/stead/brain/brain_console.mojom-webui.ts",
++  ]
++
++  ts_deps = [
++    "//ui/webui/resources/mojo:build_ts",
++  ]
++  ts_definitions = [
++    "//tools/typescript/definitions/pending.d.ts",
++  ]
++  webui_context_type = "trusted"
++}
 +
 +# Packs the prebuilt Stead sidebar SPA into stead_sidebar_resources.pak.
 +#
 +# The bundle (index.html + _app/*) and the stead_sidebar_resources.grd that
 +# lists it are copied into this directory before `gn gen` by
 +# resources/stead/install_sidebar_to_tree.sh (driven from build.sh / dev.sh).
-+# Because the .grd and its hash-named inputs are generated, GN can't discover
-+# them at analyze time.
++# The generated .grd also includes the GRDP emitted by build_webui("build") so
++# chat/sidebar/newtab can import the native Mojo modules from the WebUI root.
++# Because the .grd, GRDP, and hash-named inputs are generated, GN can't
++# discover them at analyze time.
 +grit("resources") {
 +  source = "stead_sidebar_resources.grd"
 +  enable_input_discovery_for_gn_analyze = false
++  deps = [ ":build_grdp" ]
++  inputs = [ "$target_gen_dir/resources.grdp" ]
 +  defines = []
 +  outputs = [
 +    "grit/stead_sidebar_resources.h",

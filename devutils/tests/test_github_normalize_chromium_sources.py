@@ -19,8 +19,14 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 "                                         SteadSidebarUI, SteadChatUI,\n"
                 "                                         SteadNewTabUI,\n"
                 "                                         settings::SettingsUI>(map);\n"
+                "  RegisterWebUIControllerInterfaceBinder<\n"
+                "      browser_command::mojom::CommandHandlerFactory,\n"
+                "      settings::SettingsUI>(map);\n"
                 "}\n"
                 "void PopulateChromeWebUIFrameInterfaceBrokersTrustedPartsDesktop() {\n"
+                "  registry.ForWebUI<settings::SettingsUI>()\n"
+                "      .Add<customize_color_scheme_mode::mojom::\n"
+                "               CustomizeColorSchemeModeHandlerFactory>()\n"
                 "      .Add<help_bubble::mojom::HelpBubbleHandlerFactory>()\n"
                 "      .Add<stead::mojom::BrainConsole>();\n"
                 "}\n"
@@ -88,6 +94,19 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             (stale_dir / "stead_agent_page.ts").write_text("", encoding="utf-8")
 
             subprocess.run(["bash", str(script), str(src)], check=True)
+
+            binder_text = binder.read_text(encoding="utf-8")
+            self.assertIn(
+                "customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory,\n"
+                "      settings::SettingsUI>(map);",
+                binder_text,
+            )
+            self.assertNotIn(
+                "SteadNewTabUI,\n"
+                "                                         settings::SettingsUI>(map);",
+                binder_text,
+            )
+            self.assertNotIn(".Add<stead::mojom::BrainConsole>();", binder_text)
 
             for rel in files:
                 self.assertNotIn("steadAgent", (src / rel).read_text(encoding="utf-8"))

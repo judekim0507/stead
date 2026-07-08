@@ -72,6 +72,10 @@ def main() -> int:
             f'file="{file_attr}" resource_path="{rel}" '
             f'type="BINDATA" />'
         )
+    lines.append(
+        '      <part file="${root_gen_dir}/chrome/browser/resources/'
+        'stead_sidebar/resources.grdp" />'
+    )
     lines += [
         '    </includes>',
         '  </release>',

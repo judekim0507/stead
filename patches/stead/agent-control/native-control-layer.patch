@@ -264,6 +264,7 @@ index 0000000000000..f9f3cf0ea8747
 +
 +mojom("mojo_bindings") {
 +  sources = [ "agent_control.mojom" ]
++  webui_module_path = "/"
 +
 +  public_deps = [
 +    "//mojo/public/mojom/base",
