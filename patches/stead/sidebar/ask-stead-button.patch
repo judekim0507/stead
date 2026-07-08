@@ -1,12 +1,48 @@
 --- a/chrome/browser/ui/browser_actions.cc
 +++ b/chrome/browser/ui/browser_actions.cc
-@@ -263,6 +263,11 @@ void BrowserActions::InitializeSidePanelActions() {
+@@ -44,6 +44,8 @@
+ #include "chrome/browser/ui/browser_action_id.h"
+ #include "chrome/browser/ui/browser_actions.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_navigator.h"
++#include "chrome/browser/ui/browser_navigator_params.h"
+ #include "chrome/browser/ui/chrome_pages.h"
+ #include "chrome/browser/ui/commerce/product_specifications_entry_point_controller.h"
+ #include "chrome/browser/ui/commerce/price_tracking_page_action_controller.h"
+@@ -52,6 +54,7 @@
+ #include "chrome/browser/ui/download/download_bubble_info_utils.h"
+ #include "chrome/browser/ui/download/download_bubble_ui_controller.h"
+ #include "chrome/browser/ui/download/download_commands.h"
++#include "chrome/common/webui_url_constants.h"
+ #include "chrome/browser/ui/find_bar/find_bar.h"
+ #include "chrome/browser/ui/find_bar/find_bar_controller.h"
+ #include "chrome/browser/ui/global_media_controls/media_toolbar_button_controller.h"
+@@ -263,6 +266,32 @@ void BrowserActions::InitializeSidePanelActions() {
                        kActionSidePanelShowBookmarks, bwi, true)
            .Build());
    root_action_item_->AddChild(
-+      SidePanelAction(SidePanelEntryId::kReadingList, IDS_STEAD_SIDEBAR_TITLE,
-+                      IDS_STEAD_SIDEBAR_TITLE, vector_icons::kChatIcon,
-+                      kActionSidePanelShowReadingList, bwi, true)
++      actions::ActionItem::Builder(
++          base::BindRepeating(
++              [](BrowserWindowInterface* bwi, actions::ActionItem* item,
++                 actions::ActionInvocationContext context) {
++                if (!bwi) {
++                  return;
++                }
++                NavigateParams params(bwi->GetBrowserForMigrationOnly(),
++                                      GURL(chrome::kSteadChatURL),
++                                      WindowOpenDisposition::NEW_FOREGROUND_TAB);
++                Navigate(&params);
++              },
++              bwi))
++          .SetActionId(kActionSidePanelShowReadingList)
++          .SetText(l10n_util::GetStringUTF16(IDS_STEAD_SIDEBAR_TITLE))
++          .SetTooltipText(l10n_util::GetStringUTF16(IDS_STEAD_SIDEBAR_TITLE))
++          .SetImage(ui::ImageModel::FromVectorIcon(
++              vector_icons::kChatIcon, ui::kColorIcon,
++              ui::SimpleMenuModel::kDefaultIconSize))
++          .SetProperty(actions::kActionItemPinnableKey,
++                       std::underlying_type_t<actions::ActionPinnableState>(
++                           actions::ActionPinnableState::kPinnable))
 +          .Build());
 +  root_action_item_->AddChild(
        SidePanelAction(SidePanelEntryId::kAboutThisSite,

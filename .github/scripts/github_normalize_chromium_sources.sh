@@ -67,3 +67,127 @@ if text != original:
     print("normalized Stead WebUI binder source")
 PY
 fi
+
+python3 - "$_src_dir" <<'PY'
+import re
+import shutil
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+
+
+def rewrite(rel, mutator):
+    path = src / rel
+    if not path.exists():
+        return False
+    text = path.read_text()
+    updated = mutator(text)
+    if updated != text:
+        path.write_text(updated)
+        print(f"normalized stale Stead settings agent source: {rel}")
+        return True
+    return False
+
+
+# Older resumed archives can still contain frontend/backend hunks from the
+# disabled stead/settings/agent-settings-page.patch. Keeping that half-applied
+# page can make chrome://settings request interfaces that the current patch
+# series intentionally no longer registers, which kills the WebUI renderer with
+# RESULT_CODE_KILLED_BAD_MESSAGE. Strip the whole stale page on resume.
+rewrite(
+    "chrome/browser/resources/settings/BUILD.gn",
+    lambda text: text.replace('    "stead_agent_page/stead_agent_page.ts",\n', ""),
+)
+rewrite(
+    "chrome/browser/resources/settings/route.ts",
+    lambda text: re.sub(
+        r"(^|\n)  r\.STEAD_AGENT = r\.BASIC\.createSection\(\n"
+        r"      '/agent', 'steadAgent',\n"
+        r"      loadTimeData\.getString\('steadAgentPageTitle'\)\);\n",
+        r"\1",
+        text,
+    ),
+)
+rewrite(
+    "chrome/browser/resources/settings/router.ts",
+    lambda text: text.replace("  STEAD_AGENT: Route;\n", ""),
+)
+rewrite(
+    "chrome/browser/resources/settings/settings_main/settings_main.html",
+    lambda text: re.sub(
+        r"(^|\n)  <div slot=\"view\" id=\"steadAgent\">\n"
+        r"    <template is=\"dom-if\" if=\"\[\[renderPlugin_\(\n"
+        r"        routes_\.STEAD_AGENT, lastRoute_, inSearchMode_\)\]\]\">\n"
+        r"      <settings-stead-agent-page prefs=\"\{\{prefs\}\}\"\n"
+        r"          in-search-mode=\"\[\[inSearchMode_\]\]\">\n"
+        r"      </settings-stead-agent-page>\n"
+        r"    </template>\n"
+        r"  </div>\n",
+        r"\1",
+        text,
+    ),
+)
+rewrite(
+    "chrome/browser/resources/settings/settings_main/settings_main.ts",
+    lambda text: text.replace("import '../stead_agent_page/stead_agent_page.js';\n", ""),
+)
+rewrite(
+    "chrome/browser/resources/settings/settings_menu/settings_menu.html",
+    lambda text: re.sub(
+        r"(^|\n)        <a role=\"menuitem\" id=\"steadAgent\" href=\"/agent\"\n"
+        r"            class=\"cr-nav-menu-item\">\n"
+        r"          <cr-icon icon=\"settings20:magic\"></cr-icon>\n"
+        r"          \$i18n\{steadAgentPageTitle\}\n"
+        r"          <cr-ripple></cr-ripple>\n"
+        r"        </a>\n",
+        r"\1",
+        text,
+    ),
+)
+rewrite(
+    "chrome/browser/ui/webui/settings/settings_ui.cc",
+    lambda text: re.sub(
+        r"(^|\n)  html_source->AddString\(\"steadAgentPageTitle\", \"Agent\"\);"
+        r".*?\n  html_source->AddString\(\"steadAgentStatusLocal\", \"Local\"\);\n",
+        r"\1",
+        text.replace(
+            '#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"\n',
+            "",
+        ),
+        flags=re.S,
+    ),
+)
+rewrite(
+    "chrome/browser/ui/webui/settings/settings_ui.cc",
+    lambda text: re.sub(
+        r"\nvoid SettingsUI::BindInterface\(\n"
+        r"    mojo::PendingReceiver<stead::mojom::BrainConsole> pending_receiver\) \{\n"
+        r"  stead::SteadBrainServiceFactory::BindBrainConsole\(\n"
+        r"      Profile::FromWebUI\(web_ui\(\)\), std::move\(pending_receiver\)\);\n"
+        r"\}\n",
+        "\n",
+        text,
+    ),
+)
+rewrite(
+    "chrome/browser/ui/webui/settings/settings_ui.h",
+    lambda text: text.replace(
+        '#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"\n',
+        "",
+    ).replace(
+        "\n  void BindInterface(\n"
+        "      mojo::PendingReceiver<stead::mojom::BrainConsole> pending_receiver);\n",
+        "",
+    ).replace(
+        "  void BindInterface(\n"
+        "      mojo::PendingReceiver<stead::mojom::BrainConsole> pending_receiver);\n",
+        "",
+    ),
+)
+
+stale_dir = src / "chrome/browser/resources/settings/stead_agent_page"
+if stale_dir.exists():
+    shutil.rmtree(stale_dir)
+    print("removed stale Stead settings agent page directory")
+PY
