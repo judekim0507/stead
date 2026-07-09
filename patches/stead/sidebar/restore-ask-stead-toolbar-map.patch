@@ -1,0 +1,29 @@
+--- a/chrome/browser/ui/webui/side_panel/customize_chrome/customize_toolbar/customize_toolbar_handler.cc
++++ b/chrome/browser/ui/webui/side_panel/customize_chrome/customize_toolbar/customize_toolbar_handler.cc
+@@ -46,6 +46,8 @@ MojoActionForChromeAction(actions::Actio
+       return side_panel::customize_chrome::mojom::ActionId::kShowBookmarks;
+     case kActionSidePanelShowHistoryCluster:
+       return side_panel::customize_chrome::mojom::ActionId::kShowHistoryCluster;
++    case kActionSidePanelShowReadingList:
++      return side_panel::customize_chrome::mojom::ActionId::kShowReadingList;
+     case kActionHome:
+       return side_panel::customize_chrome::mojom::ActionId::kHome;
+     case kActionForward:
+@@ -94,6 +96,8 @@ std::optional<actions::ActionId> ChromeA
+       return kActionSidePanelShowBookmarks;
+     case side_panel::customize_chrome::mojom::ActionId::kShowHistoryCluster:
+       return kActionSidePanelShowHistoryCluster;
++    case side_panel::customize_chrome::mojom::ActionId::kShowReadingList:
++      return kActionSidePanelShowReadingList;
+     case side_panel::customize_chrome::mojom::ActionId::kHome:
+       return kActionHome;
+     case side_panel::customize_chrome::mojom::ActionId::kForward:
+@@ -432,6 +436,8 @@ void CustomizeToolbarHandler::ListAction
+              side_panel::customize_chrome::mojom::CategoryId::kTools);
+   add_action(kActionSidePanelShowHistoryCluster,
+              side_panel::customize_chrome::mojom::CategoryId::kTools);
++  add_action(kActionSidePanelShowReadingList,
++             side_panel::customize_chrome::mojom::CategoryId::kYourChrome);
+   add_action(kActionShowDownloads,
+              side_panel::customize_chrome::mojom::CategoryId::kTools);
+   add_action(kActionClearBrowsingData,

@@ -19,6 +19,9 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 "                                         SteadSidebarUI, SteadChatUI,\n"
                 "                                         SteadNewTabUI,\n"
                 "                                         settings::SettingsUI>(map);\n"
+                "  // Mention the customize factory outside the real binder; the\n"
+                "  // normalizer must still restore the settings binder below.\n"
+                "  // customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory\n"
                 "  RegisterWebUIControllerInterfaceBinder<\n"
                 "      browser_command::mojom::CommandHandlerFactory,\n"
                 "      settings::SettingsUI>(map);\n"
@@ -105,6 +108,11 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 "SteadNewTabUI,\n"
                 "                                         settings::SettingsUI>(map);",
                 binder_text,
+            )
+            self.assertNotRegex(
+                binder_text,
+                r"RegisterWebUIControllerInterfaceBinder<stead::mojom::BrainConsole,"
+                r".*settings::SettingsUI>\(map\);",
             )
             self.assertNotIn(".Add<stead::mojom::BrainConsole>();", binder_text)
 

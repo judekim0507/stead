@@ -29,15 +29,28 @@ original = text
 # Older archives may contain partial hunks from the disabled
 # stead/settings/agent-settings-page.patch. Those hunks are intentionally no
 # longer in patches/series, but resumed archives can still carry them.
-text = text.replace(
-    "                                         SteadNewTabUI,\n"
-    "                                         settings::SettingsUI>(map);",
-    "                                         SteadNewTabUI>(map);",
+text = re.sub(
+    r"(RegisterWebUIControllerInterfaceBinder<stead::mojom::BrainConsole,\s*"
+    r"SteadSidebarUI,\s*SteadChatUI,\s*SteadNewTabUI),\s*"
+    r"settings::SettingsUI(>\(map\);)",
+    r"\1\2",
+    text,
+    flags=re.S,
 )
-text = text.replace(
-    "      .Add<help_bubble::mojom::HelpBubbleHandlerFactory>()\n"
-    "      .Add<stead::mojom::BrainConsole>();",
-    "      .Add<help_bubble::mojom::HelpBubbleHandlerFactory>();",
+
+def strip_stale_settings_brain_console(match):
+    return re.sub(
+        r"\n\s*\.Add<stead::mojom::BrainConsole>\(\)",
+        "",
+        match.group(0),
+    )
+
+text = re.sub(
+    r"registry\.ForWebUI<settings::SettingsUI>\(\)"
+    r"(?:\n\s*\.Add<[^;]+>\(\))*;",
+    strip_stale_settings_brain_console,
+    text,
+    flags=re.S,
 )
 text = re.sub(
     r"\nvoid RegisterWebUIBrowserInterfaceBindersForSteadSettings\([^{}]*\)\s*\{"
@@ -56,8 +69,11 @@ customize_broker = (
     "customize_color_scheme_mode::mojom::\n"
     "               CustomizeColorSchemeModeHandlerFactory"
 )
-customize_binder = (
-    "customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory"
+customize_binder_re = (
+    r"RegisterWebUIControllerInterfaceBinder<\s*"
+    r"customize_color_scheme_mode::mojom::"
+    r"CustomizeColorSchemeModeHandlerFactory\s*,\s*"
+    r"settings::SettingsUI\s*>\(map\);"
 )
 customize_snippet = (
     "  RegisterWebUIControllerInterfaceBinder<\n"
@@ -70,7 +86,7 @@ browser_command_binder = (
 )
 if (
     customize_broker in text
-    and customize_binder not in text
+    and not re.search(customize_binder_re, text, flags=re.S)
     and browser_command_binder in text
 ):
     text = text.replace(browser_command_binder, customize_snippet + browser_command_binder, 1)

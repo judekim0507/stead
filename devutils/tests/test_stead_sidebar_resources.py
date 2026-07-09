@@ -60,6 +60,32 @@ class SteadSidebarResourcesTest(unittest.TestCase):
 
         self.assertIn('+  webui_module_path = "/"', text)
 
+    def test_ask_stead_toolbar_action_is_mapped(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        series = (repo_root / "patches/series").read_text(encoding="utf-8")
+        patch = (
+            repo_root
+            / "patches/stead/sidebar/restore-ask-stead-toolbar-map.patch"
+        )
+        text = patch.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "stead/sidebar/restore-ask-stead-toolbar-map.patch",
+            series,
+        )
+        self.assertIn(
+            "case kActionSidePanelShowReadingList:",
+            text,
+        )
+        self.assertIn(
+            "ActionId::kShowReadingList",
+            text,
+        )
+        self.assertIn(
+            "add_action(kActionSidePanelShowReadingList",
+            text,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
