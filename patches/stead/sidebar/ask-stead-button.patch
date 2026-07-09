@@ -1,35 +1,3 @@
---- a/chrome/browser/ui/browser_actions.cc
-+++ b/chrome/browser/ui/browser_actions.cc
-@@ -263,6 +263,29 @@ void BrowserActions::InitializeSidePanelActions() {
-                       kActionSidePanelShowBookmarks, bwi, true)
-           .Build());
-   root_action_item_->AddChild(
-+      actions::ActionItem::Builder(
-+          base::BindRepeating(
-+              [](BrowserWindowInterface* bwi, actions::ActionItem* item,
-+                 actions::ActionInvocationContext context) {
-+                if (!bwi) {
-+                  return;
-+                }
-+                bwi->OpenGURL(
-+                    GURL("chrome://chat/ai-chat"),
-+                    WindowOpenDisposition::NEW_FOREGROUND_TAB);
-+              },
-+              bwi))
-+          .SetActionId(kActionSidePanelShowReadingList)
-+          .SetText(l10n_util::GetStringUTF16(IDS_STEAD_SIDEBAR_TITLE))
-+          .SetTooltipText(l10n_util::GetStringUTF16(IDS_STEAD_SIDEBAR_TITLE))
-+          .SetImage(ui::ImageModel::FromVectorIcon(
-+              vector_icons::kChatIcon, ui::kColorIcon,
-+              ui::SimpleMenuModel::kDefaultIconSize))
-+          .SetProperty(actions::kActionItemPinnableKey,
-+                       std::underlying_type_t<actions::ActionPinnableState>(
-+                           actions::ActionPinnableState::kPinnable))
-+          .Build());
-+  root_action_item_->AddChild(
-       SidePanelAction(SidePanelEntryId::kAboutThisSite,
-                       IDS_PAGE_INFO_ABOUT_THIS_PAGE_TITLE,
-                       IDS_PAGE_INFO_ABOUT_THIS_PAGE_TITLE,
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -9270,6 +9270,10 @@
@@ -43,3 +11,16 @@
        <message name="IDS_READ_LATER_EXPAND_BUTTON_ARIA_LABEL" desc="Aria label for the Read later list expand button.">
          Expand <ph name="HEADER">$1<ex>Unread</ex></ph>
        </message>
+--- a/chrome/browser/ui/browser_actions.cc
++++ b/chrome/browser/ui/browser_actions.cc
+@@ -266,8 +266,8 @@
+                       kActionSidePanelShowBookmarks, bwi, true)
+           .Build());
+   root_action_item_->AddChild(
+-      SidePanelAction(SidePanelEntryId::kReadingList, IDS_READ_LATER_TITLE,
+-                      IDS_READ_LATER_TITLE, kReadingListIcon,
++      SidePanelAction(SidePanelEntryId::kReadingList, IDS_STEAD_SIDEBAR_TITLE,
++                      IDS_STEAD_SIDEBAR_TITLE, vector_icons::kChatIcon,
+                       kActionSidePanelShowReadingList, bwi, true)
+           .Build());
+   if (TabsFromOtherDevicesSidePanelCoordinator::IsSupported(profile)) {

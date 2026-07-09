@@ -146,7 +146,7 @@ index 37c575d..dd3c941 100644
  #include "components/enterprise/buildflags/buildflags.h"
  #include "components/enterprise/common/files_scan_data.h"
 @@ -32,6 +33,7 @@
- 
+
  namespace content {
  class FileSelectListener;
 +class RenderFrameHost;
@@ -231,6 +231,17 @@ index 67542ae9a7bc3..5d1bb0f28ecaa 100644
  #include "chrome/browser/ui/webui/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_ui.h"
  #include "chrome/browser/ui/webui/suggest_internals/suggest_internals.mojom.h"
  #include "chrome/browser/ui/webui/suggest_internals/suggest_internals_ui.h"
+@@ -371,7 +371,8 @@ void PopulateChromeWebUIFrameBindersPartsDesktop(
+   RegisterWebUIControllerInterfaceBinder<
+       customize_color_scheme_mode::mojom::
+           CustomizeColorSchemeModeHandlerFactory,
+-      CustomizeChromeUI>(map);
++      CustomizeChromeUI,
++      settings::SettingsUI>(map);
+-
++
+   RegisterWebUIControllerInterfaceBinder<
+       theme_color_picker::mojom::ThemeColorPickerHandlerFactory,
 @@ -421,5 +425,8 @@ void PopulateChromeWebUIFrameBindersPartsDesktop(
    RegisterWebUIControllerInterfaceBinder<
        reading_list::mojom::PageHandlerFactory, ReadingListUI>(map);

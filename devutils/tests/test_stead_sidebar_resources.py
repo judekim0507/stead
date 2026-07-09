@@ -86,26 +86,41 @@ class SteadSidebarResourcesTest(unittest.TestCase):
             text,
         )
 
-    def test_ask_stead_toolbar_button_opens_chat_tab(self):
+    def test_ask_stead_toolbar_button_uses_reading_list_side_panel(self):
         repo_root = Path(__file__).resolve().parents[2]
         series = (repo_root / "patches/series").read_text(encoding="utf-8")
         patch = (
             repo_root
-            / "patches/stead/sidebar/open-ask-stead-toolbar-action.patch"
+            / "patches/stead/sidebar/ask-stead-button.patch"
         )
         text = patch.read_text(encoding="utf-8")
 
         self.assertIn(
-            "stead/sidebar/open-ask-stead-toolbar-action.patch",
+            "stead/sidebar/ask-stead-button.patch",
             series,
         )
+        self.assertNotIn("stead/sidebar/open-ask-stead-toolbar-action.patch", series)
         self.assertIn(
-            "action_id.value() == kActionSidePanelShowReadingList",
+            "SidePanelAction(SidePanelEntryId::kReadingList, IDS_STEAD_SIDEBAR_TITLE",
             text,
         )
-        self.assertIn("action_view_->browser()->OpenGURL", text)
-        self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", text)
-        self.assertIn('GURL("chrome://chat/ai-chat")', text)
+        self.assertIn("kActionSidePanelShowReadingList, bwi, true", text)
+        self.assertNotIn("OpenGURL", text)
+        self.assertNotIn("chrome://chat/ai-chat", text)
+
+    def test_settings_color_scheme_binder_is_registered(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        patch = (
+            repo_root
+            / "patches/stead/agent-control/native-control-layer.patch"
+        )
+        text = patch.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "+      CustomizeChromeUI,\n"
+            "+      settings::SettingsUI>(map);",
+            text,
+        )
 
 
 if __name__ == "__main__":
