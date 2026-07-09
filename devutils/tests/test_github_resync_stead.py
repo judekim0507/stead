@@ -37,6 +37,44 @@ class GithubResyncSteadTest(unittest.TestCase):
                 text = (Path(tmpdirname) / rel).read_text(encoding="utf-8")
                 self.assertEqual(text.count("{"), text.count("}"), rel)
 
+    def test_normalize_removes_stale_ask_stead_full_page_toolbar_override(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        normalizer = repo_root / ".github/scripts/github_normalize_chromium_sources.sh"
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            source = Path(tmpdirname)
+            toolbar = (
+                source
+                / "chrome/browser/ui/views/toolbar/pinned_action_toolbar_button.cc"
+            )
+            toolbar.parent.mkdir(parents=True)
+            toolbar.write_text(
+                '#include "chrome/browser/ui/browser.h"\n'
+                '#include "ui/base/window_open_disposition.h"\n'
+                '#include "url/gurl.h"\n'
+                "\n"
+                "void Invoke() {\n"
+                "  if (action_id.value() == kActionSidePanelShowReadingList) {\n"
+                "    action_view_->browser()->OpenGURL(\n"
+                '        GURL("chrome://chat/ai-chat"),\n'
+                "        WindowOpenDisposition::NEW_FOREGROUND_TAB);\n"
+                "    return;\n"
+                "  }\n"
+                "\n"
+                "  action_item->InvokeAction(context);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            subprocess.run([str(normalizer), str(source)], check=True)
+
+            text = toolbar.read_text(encoding="utf-8")
+            self.assertNotIn('GURL("chrome://chat/ai-chat")', text)
+            self.assertNotIn('chrome/browser/ui/browser.h', text)
+            self.assertNotIn('ui/base/window_open_disposition.h', text)
+            self.assertNotIn('url/gurl.h', text)
+            self.assertIn("action_item->InvokeAction(context);", text)
+
 
 if __name__ == "__main__":
     unittest.main()

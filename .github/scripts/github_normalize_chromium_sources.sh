@@ -131,6 +131,43 @@ if text != original:
 PY
 fi
 
+_pinned_toolbar_button="$_src_dir/chrome/browser/ui/views/toolbar/pinned_action_toolbar_button.cc"
+if [ -f "$_pinned_toolbar_button" ]; then
+  python3 - "$_pinned_toolbar_button" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+original = text
+
+# Older resumed archives can still contain the removed Ask Stead toolbar
+# override that navigates to the full-page chat WebUI. The current Ask Stead
+# button must keep Chromium's native side-panel action path instead.
+stale_block = """\
+  if (action_id.value() == kActionSidePanelShowReadingList) {
+    action_view_->browser()->OpenGURL(
+        GURL("chrome://chat/ai-chat"),
+        WindowOpenDisposition::NEW_FOREGROUND_TAB);
+    return;
+  }
+
+"""
+text = text.replace(stale_block, "")
+if text != original:
+    text = text.replace('#include "chrome/browser/ui/browser.h"\n', "")
+    text = text.replace('#include "ui/base/window_open_disposition.h"\n', "")
+    text = text.replace('#include "url/gurl.h"\n', "")
+
+if 'GURL("chrome://chat/ai-chat")' in text:
+    raise SystemExit("error: stale Ask Stead full-page toolbar override remains")
+
+if text != original:
+    path.write_text(text)
+    print("normalized stale Ask Stead toolbar full-page override")
+PY
+fi
+
 python3 - "$_src_dir" <<'PY'
 import re
 import shutil
