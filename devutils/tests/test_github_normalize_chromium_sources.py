@@ -27,6 +27,24 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 "  // normalizer must still restore the settings binder below.\n"
                 "  // customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory\n"
                 "  RegisterWebUIControllerInterfaceBinder<\n"
+                "      theme_color_picker::mojom::ThemeColorPickerHandlerFactory,\n"
+                "      CustomizeChromeUI\n"
+                "#if !BUILDFLAG(IS_CHROMEOS)\n"
+                "      ,\n"
+                "      ProfileCustomizationUI\n"
+                "#endif  // !BUILDFLAG(IS_CHROMEOS)\n"
+                "      >(map);\n"
+                "  RegisterWebUIControllerInterfaceBinder<\n"
+                "      help_bubble::mojom::HelpBubbleHandlerFactory, UserEducationInternalsUI,\n"
+                "      ReadingListUI, NewTabPageUI, CustomizeChromeUI, PasswordManagerUI,\n"
+                "      HistoryUI, lens::LensOverlayUntrustedUI, lens::LensSidePanelUntrustedUI,\n"
+                "      ReadAnythingUntrustedUI\n"
+                "#if !BUILDFLAG(IS_CHROMEOS)\n"
+                "      ,\n"
+                "      ProfilePickerUI\n"
+                "#endif  //! BUILDFLAG(IS_CHROMEOS)\n"
+                "      >(map);\n"
+                "  RegisterWebUIControllerInterfaceBinder<\n"
                 "      browser_command::mojom::CommandHandlerFactory,\n"
                 "      settings::SettingsUI>(map);\n"
                 "}\n"
@@ -105,6 +123,31 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             binder_text = binder.read_text(encoding="utf-8")
             self.assertIn(
                 "customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory,\n"
+                "      CustomizeChromeUI,\n"
+                "      settings::SettingsUI>(map);",
+                binder_text,
+            )
+            self.assertIn(
+                "theme_color_picker::mojom::ThemeColorPickerHandlerFactory,\n"
+                "      CustomizeChromeUI\n"
+                "#if !BUILDFLAG(IS_CHROMEOS)\n"
+                "      ,\n"
+                "      ProfileCustomizationUI\n"
+                "#endif  // !BUILDFLAG(IS_CHROMEOS)\n"
+                "      ,\n"
+                "      settings::SettingsUI>(map);",
+                binder_text,
+            )
+            self.assertIn(
+                "help_bubble::mojom::HelpBubbleHandlerFactory, UserEducationInternalsUI,\n"
+                "      ReadingListUI, NewTabPageUI, CustomizeChromeUI, PasswordManagerUI,\n"
+                "      HistoryUI, lens::LensOverlayUntrustedUI, lens::LensSidePanelUntrustedUI,\n"
+                "      ReadAnythingUntrustedUI\n"
+                "#if !BUILDFLAG(IS_CHROMEOS)\n"
+                "      ,\n"
+                "      ProfilePickerUI\n"
+                "#endif  //! BUILDFLAG(IS_CHROMEOS)\n"
+                "      ,\n"
                 "      settings::SettingsUI>(map);",
                 binder_text,
             )

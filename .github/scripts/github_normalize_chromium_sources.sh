@@ -69,15 +69,23 @@ customize_broker_re = (
     r"\.Add<customize_color_scheme_mode::mojom::\s*"
     r"CustomizeColorSchemeModeHandlerFactory>\(\)"
 )
+customize_any_binder_re = (
+    r"RegisterWebUIControllerInterfaceBinder<\s*"
+    r"customize_color_scheme_mode::mojom::"
+    r"CustomizeColorSchemeModeHandlerFactory"
+    r"(?:(?!>\(map\);).)*>\(map\);"
+)
 customize_binder_re = (
     r"RegisterWebUIControllerInterfaceBinder<\s*"
     r"customize_color_scheme_mode::mojom::"
-    r"CustomizeColorSchemeModeHandlerFactory\s*,\s*"
-    r"settings::SettingsUI\s*>\(map\);"
+    r"CustomizeColorSchemeModeHandlerFactory"
+    r"(?:(?!>\(map\);).)*settings::SettingsUI"
+    r"(?:(?!>\(map\);).)*>\(map\);"
 )
 customize_snippet = (
     "  RegisterWebUIControllerInterfaceBinder<\n"
     "      customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory,\n"
+    "      CustomizeChromeUI,\n"
     "      settings::SettingsUI>(map);\n\n"
 )
 browser_command_binder = (
@@ -86,10 +94,43 @@ browser_command_binder = (
 )
 if (
     re.search(customize_broker_re, text, flags=re.S)
-    and not re.search(customize_binder_re, text, flags=re.S)
+    and not re.search(customize_any_binder_re, text, flags=re.S)
     and browser_command_binder in text
 ):
     text = text.replace(browser_command_binder, customize_snippet + browser_command_binder, 1)
+
+def ensure_settings_ui_binder(factory_re, label):
+    global text
+    pattern = re.compile(
+        r"(RegisterWebUIControllerInterfaceBinder<\s*"
+        + factory_re
+        + r"\s*,)(.*?)(>\(map\);)",
+        flags=re.S,
+    )
+
+    def replace(match):
+        block = match.group(0)
+        if "settings::SettingsUI" in block:
+            return block
+        return match.group(1) + match.group(2) + ",\n      settings::SettingsUI" + match.group(3)
+
+    updated, count = pattern.subn(replace, text, count=1)
+    if count == 0:
+        raise SystemExit(f"error: settings {label} binder registration is missing")
+    text = updated
+
+ensure_settings_ui_binder(
+    r"customize_color_scheme_mode::mojom::\s*CustomizeColorSchemeModeHandlerFactory",
+    "color-scheme",
+)
+ensure_settings_ui_binder(
+    r"theme_color_picker::mojom::ThemeColorPickerHandlerFactory",
+    "theme-color-picker",
+)
+ensure_settings_ui_binder(
+    r"help_bubble::mojom::HelpBubbleHandlerFactory",
+    "help-bubble",
+)
 
 if re.search(
     r"RegisterWebUIControllerInterfaceBinder<stead::mojom::[A-Za-z0-9_]+,"

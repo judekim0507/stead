@@ -108,7 +108,7 @@ class SteadSidebarResourcesTest(unittest.TestCase):
         self.assertNotIn("OpenGURL", text)
         self.assertNotIn("chrome://chat/ai-chat", text)
 
-    def test_settings_color_scheme_binder_is_registered(self):
+    def test_settings_webui_binders_are_registered(self):
         repo_root = Path(__file__).resolve().parents[2]
         patch = (
             repo_root
@@ -118,6 +118,30 @@ class SteadSidebarResourcesTest(unittest.TestCase):
 
         self.assertIn(
             "+      CustomizeChromeUI,\n"
+            "+      settings::SettingsUI>(map);",
+            text,
+        )
+        self.assertIn(
+            "       help_bubble::mojom::HelpBubbleHandlerFactory",
+            text,
+        )
+        self.assertIn(
+            "       theme_color_picker::mojom::ThemeColorPickerHandlerFactory,\n"
+            "       CustomizeChromeUI\n"
+            " #if !BUILDFLAG(IS_CHROMEOS)\n"
+            "       ,\n"
+            "       ProfileCustomizationUI\n"
+            " #endif  // !BUILDFLAG(IS_CHROMEOS)\n"
+            "-      >(map);\n"
+            "+      ,\n"
+            "+      settings::SettingsUI>(map);",
+            text,
+        )
+        self.assertIn(
+            "       ProfilePickerUI\n"
+            " #endif  //! BUILDFLAG(IS_CHROMEOS)\n"
+            "-      >(map);\n"
+            "+      ,\n"
             "+      settings::SettingsUI>(map);",
             text,
         )
