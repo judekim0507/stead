@@ -30,7 +30,7 @@ original = text
 # stead/settings/agent-settings-page.patch. Those hunks are intentionally no
 # longer in patches/series, but resumed archives can still carry them.
 text = re.sub(
-    r"(RegisterWebUIControllerInterfaceBinder<stead::mojom::BrainConsole,\s*"
+    r"(RegisterWebUIControllerInterfaceBinder<stead::mojom::[A-Za-z0-9_]+,\s*"
     r"SteadSidebarUI,\s*SteadChatUI,\s*SteadNewTabUI),\s*"
     r"settings::SettingsUI(>\(map\);)",
     r"\1\2",
@@ -38,9 +38,9 @@ text = re.sub(
     flags=re.S,
 )
 
-def strip_stale_settings_brain_console(match):
+def strip_stale_settings_stead_interfaces(match):
     return re.sub(
-        r"\n\s*\.Add<stead::mojom::BrainConsole>\(\)",
+        r"\n\s*\.Add<stead::mojom::[A-Za-z0-9_]+>\(\)",
         "",
         match.group(0),
     )
@@ -48,7 +48,7 @@ def strip_stale_settings_brain_console(match):
 text = re.sub(
     r"registry\.ForWebUI<settings::SettingsUI>\(\)"
     r"(?:\n\s*\.Add<[^;]+>\(\))*;",
-    strip_stale_settings_brain_console,
+    strip_stale_settings_stead_interfaces,
     text,
     flags=re.S,
 )
@@ -65,9 +65,9 @@ text = re.sub(
 # entry advertised. The first settings page load then requests
 # CustomizeColorSchemeModeHandlerFactory and the renderer is killed for a bad
 # IPC message. Restore the stock binder if the broker entry is present.
-customize_broker = (
-    "customize_color_scheme_mode::mojom::\n"
-    "               CustomizeColorSchemeModeHandlerFactory"
+customize_broker_re = (
+    r"\.Add<customize_color_scheme_mode::mojom::\s*"
+    r"CustomizeColorSchemeModeHandlerFactory>\(\)"
 )
 customize_binder_re = (
     r"RegisterWebUIControllerInterfaceBinder<\s*"
@@ -85,11 +85,30 @@ browser_command_binder = (
     "      browser_command::mojom::CommandHandlerFactory,"
 )
 if (
-    customize_broker in text
+    re.search(customize_broker_re, text, flags=re.S)
     and not re.search(customize_binder_re, text, flags=re.S)
     and browser_command_binder in text
 ):
     text = text.replace(browser_command_binder, customize_snippet + browser_command_binder, 1)
+
+if re.search(
+    r"RegisterWebUIControllerInterfaceBinder<stead::mojom::[A-Za-z0-9_]+,"
+    r"[^;]*settings::SettingsUI>\(map\);",
+    text,
+    flags=re.S,
+):
+    raise SystemExit("error: stale Stead SettingsUI WebUI binder remains")
+if re.search(
+    r"registry\.ForWebUI<settings::SettingsUI>\(\)"
+    r"(?:(?!;).)*\.Add<stead::mojom::[A-Za-z0-9_]+>\(\)",
+    text,
+    flags=re.S,
+):
+    raise SystemExit("error: stale Stead SettingsUI broker entry remains")
+if re.search(customize_broker_re, text, flags=re.S) and not re.search(
+    customize_binder_re, text, flags=re.S
+):
+    raise SystemExit("error: settings color-scheme binder is missing")
 
 # The automatic chained build jobs resume from archived source trees without
 # running github_resync_stead.sh. If a prior archive has the trusted WebUI binder

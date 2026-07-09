@@ -19,6 +19,10 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 "                                         SteadSidebarUI, SteadChatUI,\n"
                 "                                         SteadNewTabUI,\n"
                 "                                         settings::SettingsUI>(map);\n"
+                "  RegisterWebUIControllerInterfaceBinder<stead::mojom::ControlConsole,\n"
+                "                                         SteadSidebarUI, SteadChatUI,\n"
+                "                                         SteadNewTabUI,\n"
+                "                                         settings::SettingsUI>(map);\n"
                 "  // Mention the customize factory outside the real binder; the\n"
                 "  // normalizer must still restore the settings binder below.\n"
                 "  // customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory\n"
@@ -28,10 +32,10 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 "}\n"
                 "void PopulateChromeWebUIFrameInterfaceBrokersTrustedPartsDesktop() {\n"
                 "  registry.ForWebUI<settings::SettingsUI>()\n"
-                "      .Add<customize_color_scheme_mode::mojom::\n"
-                "               CustomizeColorSchemeModeHandlerFactory>()\n"
+                "      .Add<customize_color_scheme_mode::mojom::CustomizeColorSchemeModeHandlerFactory>()\n"
                 "      .Add<help_bubble::mojom::HelpBubbleHandlerFactory>()\n"
-                "      .Add<stead::mojom::BrainConsole>();\n"
+                "      .Add<stead::mojom::BrainConsole>()\n"
+                "      .Add<stead::mojom::ControlConsole>();\n"
                 "}\n"
                 "void PopulateChromeWebUIFrameInterfaceBrokersUntrustedPartsDesktop() {\n"
                 "}\n",
@@ -114,7 +118,13 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 r"RegisterWebUIControllerInterfaceBinder<stead::mojom::BrainConsole,"
                 r".*settings::SettingsUI>\(map\);",
             )
+            self.assertNotRegex(
+                binder_text,
+                r"RegisterWebUIControllerInterfaceBinder<stead::mojom::ControlConsole,"
+                r".*settings::SettingsUI>\(map\);",
+            )
             self.assertNotIn(".Add<stead::mojom::BrainConsole>();", binder_text)
+            self.assertNotIn(".Add<stead::mojom::ControlConsole>();", binder_text)
 
             for rel in files:
                 self.assertNotIn("steadAgent", (src / rel).read_text(encoding="utf-8"))
