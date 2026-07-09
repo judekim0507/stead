@@ -34,6 +34,7 @@ stead/sidebar/ask-stead-button.patch
 stead/sidebar/show-ask-stead-toolbar-label.patch
 stead/sidebar/pin-ask-stead-by-default.patch
 stead/sidebar/restore-ask-stead-toolbar-map.patch
+stead/sidebar/open-ask-stead-toolbar-action.patch
 stead/sidebar/webui-name-metrics-allowlist.patch
 
 stead/chat/chat-webui-files.patch

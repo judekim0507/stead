@@ -86,6 +86,26 @@ class SteadSidebarResourcesTest(unittest.TestCase):
             text,
         )
 
+    def test_ask_stead_toolbar_button_opens_chat_tab(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        series = (repo_root / "patches/series").read_text(encoding="utf-8")
+        patch = (
+            repo_root
+            / "patches/stead/sidebar/open-ask-stead-toolbar-action.patch"
+        )
+        text = patch.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "stead/sidebar/open-ask-stead-toolbar-action.patch",
+            series,
+        )
+        self.assertIn(
+            "action_id.value() == kActionSidePanelShowReadingList",
+            text,
+        )
+        self.assertIn("chrome::AddSelectedTabWithURL", text)
+        self.assertIn('GURL("chrome://chat/ai-chat")', text)
+
 
 if __name__ == "__main__":
     unittest.main()
