@@ -103,7 +103,8 @@ class SteadSidebarResourcesTest(unittest.TestCase):
             "action_id.value() == kActionSidePanelShowReadingList",
             text,
         )
-        self.assertIn("chrome::AddSelectedTabWithURL", text)
+        self.assertIn("action_view_->browser()->OpenGURL", text)
+        self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", text)
         self.assertIn('GURL("chrome://chat/ai-chat")', text)
 
 
