@@ -105,6 +105,17 @@ class SteadSidebarResourcesTest(unittest.TestCase):
             text,
         )
         self.assertIn("kActionSidePanelShowReadingList, bwi, true", text)
+
+    def test_sidebar_native_view_marks_webui_ready(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        text = (
+            repo_root
+            / "patches/stead/sidebar/repurpose-reading-list-side-panel.patch"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "SteadSidebarSidePanelWebView::SteadSidebarSidePanelWebView", text
+        )
+        self.assertIn("+  ShowUI();", text)
         self.assertNotIn("OpenGURL", text)
         self.assertNotIn("chrome://chat/ai-chat", text)
 

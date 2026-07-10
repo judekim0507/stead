@@ -38,7 +38,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_SIDE_PANEL_WEB_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/side_panel/stead_sidebar/stead_sidebar_side_panel_web_view.cc
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,45 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -73,7 +73,12 @@
 +              profile,
 +              // "Ask Stead" (added in patches/stead/sidebar/ask-stead-button).
 +              IDS_STEAD_SIDEBAR_TITLE,
-+              /*esc_closes_ui=*/false)) {}
++              /*esc_closes_ui=*/false)) {
++  // The prebuilt Svelte app has no Chromium page-handler handshake. Mark the
++  // bundled WebUI available once its native host is attached so the side-panel
++  // entry waiter can reveal it instead of leaving it hidden at 0x0.
++  ShowUI();
++}
 +
 +SteadSidebarSidePanelWebView::~SteadSidebarSidePanelWebView() = default;
 +
