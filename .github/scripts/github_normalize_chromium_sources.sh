@@ -209,6 +209,86 @@ if text != original:
 PY
 fi
 
+_reading_list_coordinator="$_src_dir/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.cc"
+if [ -f "$_reading_list_coordinator" ]; then
+  python3 - "$_reading_list_coordinator" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+original = text
+
+required_includes = {
+    '#include "base/check_deref.h"': [
+        '#include <utility>',
+        '#include "base/functional/bind.h"',
+    ],
+    '#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"': [
+        '#include "chrome/browser/ui/browser_window/public/browser_window_features.h"',
+    ],
+    '#include "chrome/browser/ui/side_panel/side_panel_entry.h"': [
+        '#include "chrome/browser/ui/side_panel/side_panel_entry_scope.h"',
+    ],
+    '#include "chrome/browser/ui/side_panel/side_panel_registry.h"': [
+        '#include "chrome/browser/ui/side_panel/side_panel_ui.h"',
+    ],
+}
+for anchor, includes in required_includes.items():
+    if anchor not in text:
+        raise SystemExit(f"error: Ask Stead coordinator anchor missing: {anchor}")
+    for include in reversed(includes):
+        if include not in text:
+            text = text.replace(anchor, include + "\n" + anchor, 1)
+
+stale_factory = """\
+  return std::make_unique<SteadSidebarSidePanelWebView>(
+      profile, scope, base::RepeatingClosure());
+"""
+current_factory = """\
+  auto close_cb = base::BindRepeating(
+      [](SidePanelEntryScope* entry_scope) {
+        entry_scope->GetBrowserWindowInterface()
+            .GetFeatures()
+            .side_panel_ui()
+            ->Close();
+      },
+      base::Unretained(&scope));
+  return std::make_unique<SteadSidebarSidePanelWebView>(
+      profile, scope, std::move(close_cb));
+"""
+if stale_factory in text:
+    text = text.replace(stale_factory, current_factory, 1)
+elif current_factory not in text:
+    raise SystemExit("error: Ask Stead close callback source is missing")
+
+stale_registration = """\
+  global_registry->Register(std::make_unique<SidePanelEntry>(
+      SidePanelEntry::Key(SidePanelEntry::Id::kReadingList),
+      base::BindRepeating(&CreateReadingListWebView, &profile_.get(),
+                          &tab_strip_model_.get()),
+      /*default_content_width_callback=*/base::NullCallback()));
+"""
+current_registration = """\
+  auto entry = std::make_unique<SidePanelEntry>(
+      SidePanelEntry::Key(SidePanelEntry::Id::kReadingList),
+      base::BindRepeating(&CreateReadingListWebView, &profile_.get(),
+                          &tab_strip_model_.get()),
+      /*default_content_width_callback=*/base::NullCallback());
+  entry->set_should_show_header(false);
+  global_registry->Register(std::move(entry));
+"""
+if stale_registration in text:
+    text = text.replace(stale_registration, current_registration, 1)
+elif current_registration not in text:
+    raise SystemExit("error: Ask Stead headerless entry source is missing")
+
+if text != original:
+    path.write_text(text)
+    print("normalized Ask Stead side-panel coordinator")
+PY
+fi
+
 python3 - "$_src_dir" <<'PY'
 import re
 import shutil

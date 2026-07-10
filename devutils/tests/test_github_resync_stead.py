@@ -75,6 +75,50 @@ class GithubResyncSteadTest(unittest.TestCase):
             self.assertNotIn('url/gurl.h', text)
             self.assertIn("action_item->InvokeAction(context);", text)
 
+    def test_normalize_upgrades_resumed_ask_stead_coordinator(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        normalizer = repo_root / ".github/scripts/github_normalize_chromium_sources.sh"
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            source = Path(tmpdirname)
+            coordinator = (
+                source
+                / "chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.cc"
+            )
+            coordinator.parent.mkdir(parents=True)
+            coordinator.write_text(
+                '#include "base/check_deref.h"\n'
+                '#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"\n'
+                '#include "chrome/browser/ui/side_panel/side_panel_entry.h"\n'
+                '#include "chrome/browser/ui/side_panel/side_panel_registry.h"\n'
+                "\n"
+                "std::unique_ptr<views::View> CreateReadingListWebView(\n"
+                "    Profile* profile,\n"
+                "    TabStripModel* tab_strip_model,\n"
+                "    SidePanelEntryScope& scope) {\n"
+                "  return std::make_unique<SteadSidebarSidePanelWebView>(\n"
+                "      profile, scope, base::RepeatingClosure());\n"
+                "}\n"
+                "\n"
+                "void ReadingListSidePanelCoordinator::CreateAndRegisterEntry(\n"
+                "    SidePanelRegistry* global_registry) {\n"
+                "  global_registry->Register(std::make_unique<SidePanelEntry>(\n"
+                "      SidePanelEntry::Key(SidePanelEntry::Id::kReadingList),\n"
+                "      base::BindRepeating(&CreateReadingListWebView, &profile_.get(),\n"
+                "                          &tab_strip_model_.get()),\n"
+                "      /*default_content_width_callback=*/base::NullCallback()));\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            subprocess.run([str(normalizer), str(source)], check=True)
+
+            text = coordinator.read_text(encoding="utf-8")
+            self.assertIn("profile, scope, std::move(close_cb)", text)
+            self.assertIn("entry->set_should_show_header(false);", text)
+            self.assertIn('side_panel_ui.h', text)
+            self.assertNotIn("profile, scope, base::RepeatingClosure()", text)
+
 
 if __name__ == "__main__":
     unittest.main()
