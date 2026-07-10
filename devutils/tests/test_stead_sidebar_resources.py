@@ -5,6 +5,16 @@ from pathlib import Path
 
 
 class SteadSidebarResourcesTest(unittest.TestCase):
+    def test_ask_stead_content_uses_the_resize_edge(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        patch = repo_root / "patches/stead/sidebar/align-sidebar-content-edge.patch"
+        text = patch.read_text(encoding="utf-8")
+
+        self.assertIn("SidePanelEntryId::kReadingList", text)
+        self.assertIn("border_insets.set_left(0)", text)
+        self.assertIn("border_insets.set_right(0)", text)
+        self.assertIn("UpdateBorderInsets();", text)
+
     def test_sidebar_close_handler_uses_current_webui_list_type(self):
         repo_root = Path(__file__).resolve().parents[2]
         patch = repo_root / "patches/stead/sidebar/stead-sidebar-webui-files.patch"

@@ -1,0 +1,28 @@
+--- a/chrome/browser/ui/views/side_panel/side_panel.cc
++++ b/chrome/browser/ui/views/side_panel/side_panel.cc
+@@ -429,6 +429,16 @@ void SidePanel::SetBackgroundRadii(const gfx::RoundedCornersF& radii) {
+ 
+ void SidePanel::UpdateBorderInsets() {
+   gfx::Insets border_insets = GetBorderInsets(this);
++  SidePanelUI* side_panel_ui =
++      browser_view_->browser()->GetFeatures().side_panel_ui();
++  if (side_panel_ui && side_panel_ui->IsSidePanelEntryShowing(
++                           SidePanelEntryKey(SidePanelEntryId::kReadingList))) {
++    if (IsResizeAreaOnLeft(this)) {
++      border_insets.set_left(0);
++    } else {
++      border_insets.set_right(0);
++    }
++  }
+   if (header_view_) {
+     int top_inset = header_view_->height() - border_insets.top();
+     border_insets += gfx::Insets::TLBR(top_inset, 0, 0, 0);
+@@ -449,6 +459,8 @@ void SidePanel::UpdateWidthOnEntryChanged() {
+     return;
+   }
+ 
++  UpdateBorderInsets();
++
+   std::optional<SidePanelEntry::Id> current_entry =
+       side_panel_ui->GetCurrentEntryId();
+   if (!current_entry) {
