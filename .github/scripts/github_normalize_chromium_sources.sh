@@ -460,4 +460,23 @@ if menu_ts_path.exists():
         print("normalized Stead AI Settings click handling")
     if "a:not(#extensionsLink):not(#steadAiLink)" not in text:
         raise SystemExit("error: Stead AI Settings click handling is missing")
+
+# The static SPA gains a few GRIT include IDs whenever a route adds chunks.
+# Resumed source archives retain the old allocation even when the vendored
+# bundle is current, so keep enough headroom for route growth.
+resource_ids_path = src / "tools/gritsettings/resource_ids.spec"
+if resource_ids_path.exists():
+    text = resource_ids_path.read_text()
+    original = text
+    entry_re = re.compile(
+        r'("chrome/browser/resources/stead_sidebar/stead_sidebar_resources\.grd"\s*:\s*\{\s*'
+        r'"META"\s*:\s*\{"sizes"\s*:\s*\{"includes"\s*:\s*\[)\d+(\]\}\},)',
+        flags=re.S,
+    )
+    text, count = entry_re.subn(r"\g<1>100\2", text, count=1)
+    if count == 0:
+        raise SystemExit("error: Stead sidebar GRIT resource allocation is missing")
+    if text != original:
+        resource_ids_path.write_text(text)
+        print("normalized Stead sidebar GRIT resource allocation")
 PY

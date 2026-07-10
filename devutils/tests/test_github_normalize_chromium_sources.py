@@ -218,6 +218,28 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             self.assertIn('a:not(#extensionsLink):not(#steadAiLink)', html)
             self.assertIn('a:not(#extensionsLink):not(#steadAiLink)', script_text)
 
+    def test_expands_stead_sidebar_grit_allocation_for_resumed_bundle(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        script = repo_root / ".github/scripts/github_normalize_chromium_sources.sh"
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            src = Path(tmpdirname)
+            spec = src / "tools/gritsettings/resource_ids.spec"
+            spec.parent.mkdir(parents=True)
+            spec.write_text(
+                '  "chrome/browser/resources/stead_sidebar/stead_sidebar_resources.grd": {\n'
+                '    "META": {"sizes": {"includes": [60]}},\n'
+                '    "includes": [11000],\n'
+                '  },\n',
+                encoding="utf-8",
+            )
+
+            subprocess.run(["bash", str(script), str(src)], check=True)
+
+            normalized = spec.read_text(encoding="utf-8")
+            self.assertIn('"includes": [100]', normalized)
+            self.assertNotIn('"includes": [60]', normalized)
+
 
 if __name__ == "__main__":
     unittest.main()
