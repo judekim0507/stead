@@ -218,6 +218,29 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             self.assertIn('a:not(#extensionsLink):not(#steadAiLink)', html)
             self.assertIn('a:not(#extensionsLink):not(#steadAiLink)', script_text)
 
+    def test_rewrites_stale_stead_ai_link_target(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        script = repo_root / ".github/scripts/github_normalize_chromium_sources.sh"
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            src = Path(tmpdirname)
+            menu_dir = src / "chrome/browser/resources/settings/settings_menu"
+            menu_dir.mkdir(parents=True)
+            menu = menu_dir / "settings_menu.html"
+            menu.write_text(
+                '<cr-menu-selector id="menu" '
+                'selectable="a:not(#extensionsLink):not(#steadAiLink)">\n'
+                '  <a id="steadAiLink" href="stead://chat/ai-settings">Stead AI</a>\n'
+                '</cr-menu-selector>\n',
+                encoding="utf-8",
+            )
+
+            subprocess.run(["bash", str(script), str(src)], check=True)
+
+            normalized = menu.read_text(encoding="utf-8")
+            self.assertIn('href="chrome://chat/ai-settings"', normalized)
+            self.assertNotIn('href="stead://chat/ai-settings"', normalized)
+
     def test_expands_stead_sidebar_grit_allocation_for_resumed_bundle(self):
         repo_root = Path(__file__).resolve().parents[2]
         script = repo_root / ".github/scripts/github_normalize_chromium_sources.sh"

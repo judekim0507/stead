@@ -421,6 +421,10 @@ if menu_path.exists():
     text = menu_path.read_text()
     original = text
     text = text.replace(
+        'href="stead://chat/ai-settings"',
+        'href="chrome://chat/ai-settings"',
+    )
+    text = text.replace(
         'selectable="a:not(#extensionsLink)"',
         'selectable="a:not(#extensionsLink):not(#steadAiLink)"',
     )
@@ -446,6 +450,8 @@ if menu_path.exists():
         print("normalized Stead AI Settings menu link")
     if 'id="steadAiLink"' not in text:
         raise SystemExit("error: Stead AI Settings menu link is missing")
+    if 'href="chrome://chat/ai-settings"' not in text:
+        raise SystemExit("error: Stead AI Settings menu target is stale")
 
 menu_ts_path = src / "chrome/browser/resources/settings/settings_menu/settings_menu.ts"
 if menu_ts_path.exists():
