@@ -214,7 +214,7 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             html = (menu_dir / "settings_menu.html").read_text(encoding="utf-8")
             script_text = (menu_dir / "settings_menu.ts").read_text(encoding="utf-8")
             self.assertIn('id="steadAiLink"', html)
-            self.assertIn('href="stead://chat/ai-settings"', html)
+            self.assertIn('href="chrome://chat/ai-settings"', html)
             self.assertIn('a:not(#extensionsLink):not(#steadAiLink)', html)
             self.assertIn('a:not(#extensionsLink):not(#steadAiLink)', script_text)
 

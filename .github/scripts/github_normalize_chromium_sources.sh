@@ -432,7 +432,7 @@ if menu_path.exists():
         )
         stead_link = (
             "        <a role=\"menuitem\" id=\"steadAiLink\"\n"
-            "            href=\"stead://chat/ai-settings\" class=\"cr-nav-menu-item\">\n"
+            "            href=\"chrome://chat/ai-settings\" class=\"cr-nav-menu-item\">\n"
             "          <cr-icon icon=\"settings20:magic\"></cr-icon>\n"
             "          Stead AI\n"
             "          <cr-ripple></cr-ripple>\n"
