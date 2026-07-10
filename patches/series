@@ -51,5 +51,6 @@ stead/brain/brain-broker.patch
 # and settings_ui.h. Non-essential (provider auth is also in the sidebar/chat
 # model controls); re-enable once the settings hunks are regenerated.
 # stead/settings/agent-settings-page.patch
+stead/settings/stead-ai-settings-link.patch
 stead/agent-control/drive-overlay-and-tab-context.patch
 stead/brain/replay-ready-to-new-observers.patch

@@ -94,7 +94,15 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                     "          $i18n{steadAgentPageTitle}\n"
                     "          <cr-ripple></cr-ripple>\n"
                     "        </a>\n"
+                    "        <a role=\"menuitem\" id=\"steadAiLink\"\n"
+                    "            href=\"chrome://chat/ai-settings\" class=\"cr-nav-menu-item\">\n"
+                    "          <cr-icon icon=\"settings20:magic\"></cr-icon>\n"
+                    "          Stead AI\n"
+                    "          <cr-ripple></cr-ripple>\n"
+                    "        </a>\n"
                     "        <a role=\"menuitem\" id=\"autofill\"></a>\n",
+                "chrome/browser/resources/settings/settings_menu/settings_menu.ts":
+                    "const selector = 'a:not(#extensionsLink):not(#steadAiLink)';\n",
                 "chrome/browser/ui/webui/settings/settings_ui.cc":
                     '#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"\n'
                     "  html_source->AddString(\"steadAgentPageTitle\", \"Agent\");\n"
@@ -172,6 +180,11 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             for rel in files:
                 self.assertNotIn("steadAgent", (src / rel).read_text(encoding="utf-8"))
                 self.assertNotIn("BrainConsole", (src / rel).read_text(encoding="utf-8"))
+            menu_text = (src / "chrome/browser/resources/settings/settings_menu/settings_menu.html").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn('id="steadAiLink"', menu_text)
+            self.assertIn('href="chrome://chat/ai-settings"', menu_text)
             self.assertFalse(stale_dir.exists())
 
 

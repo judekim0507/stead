@@ -1,0 +1,37 @@
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+@@ -44,5 +44,6 @@
+     <div role="navigation">
+-      <cr-menu-selector id="menu" selectable="a:not(#extensionsLink)"
++      <cr-menu-selector id="menu"
++          selectable="a:not(#extensionsLink):not(#steadAiLink)"
+           attr-for-selected="href" on-iron-activate="onSelectorActivate_"
+           on-click="onLinkClick_" selected-attribute="selected">
+         <a role="menuitem"
+@@ -63,6 +64,12 @@
+           $i18n{peoplePageTitle}
+           <cr-ripple></cr-ripple>
+         </a>
++        <a role="menuitem" id="steadAiLink"
++            href="chrome://chat/ai-settings" class="cr-nav-menu-item">
++          <cr-icon icon="settings20:magic"></cr-icon>
++          Stead AI
++          <cr-ripple></cr-ripple>
++        </a>
+         <a role="menuitem" id="autofill" href="/autofill"
+             on-click="onAutofillClick_"
+             class="cr-nav-menu-item"
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.ts b/chrome/browser/resources/settings/settings_menu/settings_menu.ts
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.ts
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.ts
+@@ -118,7 +118,8 @@ export class SettingsMenuElement extends SettingsMenuElementBase {
+    * accessibility purposes, taps are handled separately.
+    */
+   private onLinkClick_(event: Event) {
+-    if ((event.target as HTMLElement).matches('a:not(#extensionsLink)')) {
++    if ((event.target as HTMLElement)
++            .matches('a:not(#extensionsLink):not(#steadAiLink)')) {
+       event.preventDefault();
+     }
+   }
