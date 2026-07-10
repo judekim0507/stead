@@ -228,6 +228,10 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             spec.parent.mkdir(parents=True)
             spec.write_text(
                 '  "chrome/browser/resources/stead_sidebar/stead_sidebar_resources.grd": {\n'
+                '    "META": {"sizes": {"includes": [100]}},\n'
+                '    "includes": [11000],\n'
+                '  },\n'
+                '  "chrome/browser/resources/stead_sidebar/stead_sidebar_resources.grd": {\n'
                 '    "META": {"sizes": {"includes": [60]}},\n'
                 '    "includes": [11000],\n'
                 '  },\n',
@@ -237,7 +241,7 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             subprocess.run(["bash", str(script), str(src)], check=True)
 
             normalized = spec.read_text(encoding="utf-8")
-            self.assertIn('"includes": [100]', normalized)
+            self.assertEqual(normalized.count('"includes": [100]'), 2)
             self.assertNotIn('"includes": [60]', normalized)
 
 

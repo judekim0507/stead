@@ -473,7 +473,10 @@ if resource_ids_path.exists():
         r'"META"\s*:\s*\{"sizes"\s*:\s*\{"includes"\s*:\s*\[)\d+(\]\}\},)',
         flags=re.S,
     )
-    text, count = entry_re.subn(r"\g<1>100\2", text, count=1)
+    # Repeated resumed builds may contain a duplicate entry when an older
+    # shared-file hunk was partially forward-applied. Normalize every match:
+    # resource_ids.spec is a Python dict and its last duplicate key wins.
+    text, count = entry_re.subn(r"\g<1>100\2", text)
     if count == 0:
         raise SystemExit("error: Stead sidebar GRIT resource allocation is missing")
     if text != original:
