@@ -187,6 +187,37 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             self.assertIn('href="chrome://chat/ai-settings"', menu_text)
             self.assertFalse(stale_dir.exists())
 
+    def test_adds_safe_stead_ai_link_to_resumed_settings_menu(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        script = repo_root / ".github/scripts/github_normalize_chromium_sources.sh"
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            src = Path(tmpdirname)
+            menu_dir = src / "chrome/browser/resources/settings/settings_menu"
+            menu_dir.mkdir(parents=True)
+            (menu_dir / "settings_menu.html").write_text(
+                '<cr-menu-selector id="menu" selectable="a:not(#extensionsLink)">\n'
+                '        <a role="menuitem" id="people" href="/people">\n'
+                '          $i18n{peoplePageTitle}\n'
+                '          <cr-ripple></cr-ripple>\n'
+                '        </a>\n'
+                '</cr-menu-selector>\n',
+                encoding="utf-8",
+            )
+            (menu_dir / "settings_menu.ts").write_text(
+                "if (target.matches('a:not(#extensionsLink)')) event.preventDefault();\n",
+                encoding="utf-8",
+            )
+
+            subprocess.run(["bash", str(script), str(src)], check=True)
+
+            html = (menu_dir / "settings_menu.html").read_text(encoding="utf-8")
+            script_text = (menu_dir / "settings_menu.ts").read_text(encoding="utf-8")
+            self.assertIn('id="steadAiLink"', html)
+            self.assertIn('href="stead://chat/ai-settings"', html)
+            self.assertIn('a:not(#extensionsLink):not(#steadAiLink)', html)
+            self.assertIn('a:not(#extensionsLink):not(#steadAiLink)', script_text)
+
 
 if __name__ == "__main__":
     unittest.main()

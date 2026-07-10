@@ -411,4 +411,53 @@ stale_dir = src / "chrome/browser/resources/settings/stead_agent_page"
 if stale_dir.exists():
     shutil.rmtree(stale_dir)
     print("removed stale Stead settings agent page directory")
+
+# Resumed archives already contain Chromium's Settings sources, so a newly
+# added shared-file patch may be skipped by `patch -N` when nearby Helium hunks
+# have drifted. Keep the safe external Stead AI link deterministic here. This
+# does not bind any Stead Mojo interface to SettingsUI.
+menu_path = src / "chrome/browser/resources/settings/settings_menu/settings_menu.html"
+if menu_path.exists():
+    text = menu_path.read_text()
+    original = text
+    text = text.replace(
+        'selectable="a:not(#extensionsLink)"',
+        'selectable="a:not(#extensionsLink):not(#steadAiLink)"',
+    )
+    if 'id="steadAiLink"' not in text:
+        people_end = (
+            "          $i18n{peoplePageTitle}\n"
+            "          <cr-ripple></cr-ripple>\n"
+            "        </a>\n"
+        )
+        stead_link = (
+            "        <a role=\"menuitem\" id=\"steadAiLink\"\n"
+            "            href=\"stead://chat/ai-settings\" class=\"cr-nav-menu-item\">\n"
+            "          <cr-icon icon=\"settings20:magic\"></cr-icon>\n"
+            "          Stead AI\n"
+            "          <cr-ripple></cr-ripple>\n"
+            "        </a>\n"
+        )
+        if people_end not in text:
+            raise SystemExit("error: Stead AI Settings menu anchor is missing")
+        text = text.replace(people_end, people_end + stead_link, 1)
+    if text != original:
+        menu_path.write_text(text)
+        print("normalized Stead AI Settings menu link")
+    if 'id="steadAiLink"' not in text:
+        raise SystemExit("error: Stead AI Settings menu link is missing")
+
+menu_ts_path = src / "chrome/browser/resources/settings/settings_menu/settings_menu.ts"
+if menu_ts_path.exists():
+    text = menu_ts_path.read_text()
+    original = text
+    text = text.replace(
+        "'a:not(#extensionsLink)'",
+        "'a:not(#extensionsLink):not(#steadAiLink)'",
+    )
+    if text != original:
+        menu_ts_path.write_text(text)
+        print("normalized Stead AI Settings click handling")
+    if "a:not(#extensionsLink):not(#steadAiLink)" not in text:
+        raise SystemExit("error: Stead AI Settings click handling is missing")
 PY
