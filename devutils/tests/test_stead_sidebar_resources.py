@@ -5,6 +5,14 @@ from pathlib import Path
 
 
 class SteadSidebarResourcesTest(unittest.TestCase):
+    def test_sidebar_close_handler_uses_current_webui_list_type(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        patch = repo_root / "patches/stead/sidebar/stead-sidebar-webui-files.patch"
+        text = patch.read_text(encoding="utf-8")
+
+        self.assertIn("const base::ListValue&", text)
+        self.assertNotIn("base::Value::List", text)
+
     def test_sidebar_grd_includes_generated_mojo_grdp(self):
         repo_root = Path(__file__).resolve().parents[2]
         script = repo_root / "resources/stead/gen_sidebar_grd.py"

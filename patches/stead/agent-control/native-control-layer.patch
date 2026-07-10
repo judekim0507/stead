@@ -7561,7 +7561,7 @@ index 525a910..34ee0fe 100644
  #include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
  #include "chrome/common/webui_url_constants.h"
-@@ -58,4 +61,10 @@ void SteadSidebarUI::HandleClose(const base::Value::List&) {
+@@ -58,4 +61,10 @@ void SteadSidebarUI::HandleClose(const base::ListValue&) {
    }
  }
  

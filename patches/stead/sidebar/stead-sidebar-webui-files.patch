@@ -46,7 +46,7 @@ new file mode 100644
 +  static constexpr std::string_view GetWebUIName() { return "SteadSidebar"; }
 +
 + private:
-+  void HandleClose(const base::Value::List&);
++  void HandleClose(const base::ListValue&);
 +
 +  WEB_UI_CONTROLLER_TYPE_DECL();
 +};
@@ -111,7 +111,7 @@ new file mode 100644
 +
 +SteadSidebarUI::~SteadSidebarUI() = default;
 +
-+void SteadSidebarUI::HandleClose(const base::Value::List&) {
++void SteadSidebarUI::HandleClose(const base::ListValue&) {
 +  if (embedder()) {
 +    embedder()->CloseUI();
 +  }
