@@ -116,8 +116,19 @@ class SteadSidebarResourcesTest(unittest.TestCase):
             "SteadSidebarSidePanelWebView::SteadSidebarSidePanelWebView", text
         )
         self.assertIn("+  ShowUI();", text)
+        self.assertIn("entry->set_should_show_header(false);", text)
+        self.assertIn("profile, scope, std::move(close_cb)", text)
         self.assertNotIn("OpenGURL", text)
         self.assertNotIn("chrome://chat/ai-chat", text)
+
+    def test_sidebar_webui_exposes_native_close_message(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        text = (
+            repo_root / "patches/stead/sidebar/stead-sidebar-webui-files.patch"
+        ).read_text(encoding="utf-8")
+        self.assertIn("TopChromeWebUIController(web_ui, /*enable_chrome_send=*/true)", text)
+        self.assertIn('"closeSteadSidebar"', text)
+        self.assertIn("embedder()->CloseUI();", text)
 
     def test_settings_webui_binders_are_registered(self):
         repo_root = Path(__file__).resolve().parents[2]

@@ -86,9 +86,19 @@
 +END_METADATA
 --- a/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.cc
 +++ b/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.cc
-@@ -14,15 +14,17 @@
+@@ -9,18 +9,33 @@
++#include <utility>
+ #include "base/check_deref.h"
++#include "base/functional/bind.h"
+ #include "base/functional/callback.h"
+ #include "base/functional/callback_helpers.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
  #include "chrome/browser/ui/side_panel/side_panel_entry.h"
++#include "chrome/browser/ui/side_panel/side_panel_entry_scope.h"
  #include "chrome/browser/ui/side_panel/side_panel_registry.h"
++#include "chrome/browser/ui/side_panel/side_panel_ui.h"
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
 -#include "chrome/browser/ui/views/side_panel/reading_list/read_later_side_panel_web_view.h"
 +#include "chrome/browser/ui/views/side_panel/stead_sidebar/stead_sidebar_side_panel_web_view.h"
@@ -102,11 +112,31 @@
 -      profile, tab_strip_model, scope, base::RepeatingClosure());
 +  // Stead repurposes the reading-list side-panel slot to host the agent
 +  // sidebar WebUI (chrome://sidebar). tab_strip_model is intentionally unused.
++  auto close_cb = base::BindRepeating(
++      [](SidePanelEntryScope* entry_scope) {
++        entry_scope->GetBrowserWindowInterface()
++            .GetFeatures()
++            .side_panel_ui()
++            ->Close();
++      },
++      base::Unretained(&scope));
 +  return std::make_unique<SteadSidebarSidePanelWebView>(
-+      profile, scope, base::RepeatingClosure());
++      profile, scope, std::move(close_cb));
  }
- }  // namespace
- 
+@@ -47,8 +62,10 @@ ReadingListSidePanelCoordinator::~ReadingListSidePanelCoordinator() = default;
+ void ReadingListSidePanelCoordinator::CreateAndRegisterEntry(
+     SidePanelRegistry* global_registry) {
+-  global_registry->Register(std::make_unique<SidePanelEntry>(
++  auto entry = std::make_unique<SidePanelEntry>(
+       SidePanelEntry::Key(SidePanelEntry::Id::kReadingList),
+       base::BindRepeating(&CreateReadingListWebView, &profile_.get(),
+                           &tab_strip_model_.get()),
+-      /*default_content_width_callback=*/base::NullCallback()));
++      /*default_content_width_callback=*/base::NullCallback());
++  entry->set_should_show_header(false);
++  global_registry->Register(std::move(entry));
+ }
+
 --- a/chrome/browser/ui/views/side_panel/BUILD.gn
 +++ b/chrome/browser/ui/views/side_panel/BUILD.gn
 @@ -37,6 +37,8 @@

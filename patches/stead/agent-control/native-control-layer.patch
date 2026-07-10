@@ -7552,20 +7552,18 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.c
 index 525a910..34ee0fe 100644
 --- a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -4,7 +4,10 @@
- 
+@@ -5,5 +5,8 @@
  #include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
  
 +#include <utility>
 +
+ #include "base/functional/bind.h"
  #include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
  #include "chrome/common/webui_url_constants.h"
- #include "chrome/grit/stead_sidebar_resources.h"
- #include "chrome/grit/stead_sidebar_resources_map.h"
-@@ -46,4 +49,10 @@ SteadSidebarUI::SteadSidebarUI(content::WebUI* web_ui)
- 
- SteadSidebarUI::~SteadSidebarUI() = default;
+@@ -58,4 +61,10 @@ void SteadSidebarUI::HandleClose(const base::Value::List&) {
+   }
+ }
  
 +void SteadSidebarUI::BindInterface(
 +    mojo::PendingReceiver<stead::mojom::ControlConsole> receiver) {
@@ -7578,10 +7576,10 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
 index 7fcf386..c3bde7b 100644
 --- a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
-@@ -7,11 +7,13 @@
- 
+@@ -8,11 +8,13 @@
  #include <string_view>
  
+ #include "base/values.h"
 +#include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
  #include "chrome/browser/ui/webui/top_chrome/top_chrome_web_ui_controller.h"
  #include "chrome/browser/ui/webui/top_chrome/top_chrome_webui_config.h"
