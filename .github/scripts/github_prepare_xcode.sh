@@ -23,7 +23,9 @@ sudo mv /Applications/tmp_Xcode_26.app "$TARGET_XCODE_PATH"
 
 # Switch to target Xcode and clean simulators
 sudo xcode-select --switch "$TARGET_XCODE_PATH"
-sudo xcrun simctl delete all
+if ! sudo xcrun simctl delete all; then
+  echo "Warning: simulator cleanup failed; continuing because simulators are not used by the build"
+fi
 
 # Make sure metal toolchain is installed
 xcodebuild -downloadComponent MetalToolchain
