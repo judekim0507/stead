@@ -85,6 +85,16 @@ if ! [ -z "${MACOS_CERTIFICATE_NAME-}" ]; then
 else
   echo "warn: MACOS_CERTIFICATE_NAME is missing; skipping notarization" >&2
   codesign --force --deep --sign - out/Default/Stead.app
+  # `--deep` invents a content-derived identifier for standalone executables.
+  # Keep the brain's identity stable so macOS Keychain ACLs survive rebuilds,
+  # then refresh the outer app signature after changing the nested helper.
+  codesign --force --sign - --identifier com.steadbrowser.app.stead-brain \
+    "$_app_dir/Contents/MacOS/stead-brain"
+  codesign --force --sign - --identifier com.steadbrowser.app \
+    --entitlements "$_root_dir/entitlements/app-entitlements.plist" "$_app_dir"
+  test "$(codesign -dv --verbose=4 "$_app_dir/Contents/MacOS/stead-brain" 2>&1 | \
+    sed -n 's/^Identifier=//p')" = "com.steadbrowser.app.stead-brain"
+  codesign --verify --deep --strict "$_app_dir"
 fi
 
 if [ -z "${OUT_DMG_PATH:-}" ]; then
