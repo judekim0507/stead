@@ -1805,9 +1805,10 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.c
 index c90440a..dc14ac8 100644
 --- a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -10,2 +10,3 @@
+@@ -12,3 +12,4 @@
  #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
 +#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"
+ #include "chrome/browser/ui/webui/favicon_source.h"
  #include "chrome/common/webui_url_constants.h"
 @@ -57,3 +58,9 @@ void SteadSidebarUI::BindInterface(
  }
@@ -1837,9 +1838,10 @@ diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc b/chrome/browse
 index ddebcd9..956b618 100644
 --- a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
 +++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
-@@ -10,2 +10,3 @@
+@@ -11,3 +11,4 @@
  #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
 +#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"
+ #include "chrome/browser/ui/webui/favicon_source.h"
  #include "chrome/common/webui_url_constants.h"
 @@ -58,3 +59,9 @@ void SteadChatUI::BindInterface(
  }

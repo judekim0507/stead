@@ -42,7 +42,7 @@ diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc b/chrome/browse
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,56 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.

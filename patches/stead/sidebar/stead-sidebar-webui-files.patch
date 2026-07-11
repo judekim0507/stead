@@ -56,7 +56,7 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.c
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,69 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.

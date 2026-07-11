@@ -14,10 +14,11 @@
 +  browser_control_->ReleaseAgentOwnedTab(tab_id);
    ClearTabDriving(tab_id);
    for (auto& observer : console_observers_) {
-@@ -2506,2 +2509,4 @@ class SteadAgentControlService::PrivateBrowserControl {
+@@ -1689,3 +1692,5 @@ class SteadAgentControlService::PrivateBrowserControl {
    base::flat_set<int32_t> agent_owned_tabs_;
 +  base::flat_map<int32_t, content::WebContents::ScopedIgnoreInputEvents>
 +      agent_input_blocks_;
+   base::WeakPtrFactory<PrivateBrowserControl> weak_factory_{this};
  };
 @@ -3747,5 +3752,7 @@ mojom::ActionResultPtr SteadAgentControlService::PrivateBrowserControl::OpenTab(
                            kAgentTabGroupTitle,
