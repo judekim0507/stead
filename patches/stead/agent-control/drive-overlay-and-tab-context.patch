@@ -27,7 +27,7 @@ index 5f5e3aa..71ae87f 100644
  };
  
  // AgentControl is the broker-facing surface. Raw BrowserControl primitives stay
-@@ -345,4 +356,8 @@ interface ControlConsole {
+@@ -345,4 +356,9 @@ interface ControlConsole {
    GetAuditLog(uint32 max_entries) => (array<AuditEntry> entries);
    RespondToConfirmation(int32 action_id, bool approve);
    Cancel(int32 tab_id);
@@ -35,6 +35,7 @@ index 5f5e3aa..71ae87f 100644
 +  // tab is not an http(s) page. Read-only display context; not a driving
 +  // surface.
 +  GetActiveTabContext() => (TabContextInfo? context);
++  ListOpenTabContexts() => (array<TabContextInfo> contexts);
  };
 diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 index 46fb0fb..d3be4ca 100644
@@ -118,7 +119,7 @@ index 46fb0fb..d3be4ca 100644
    if (download_observer_) {
      download_observer_->Shutdown();
    }
-@@ -2296,11 +2339,44 @@ void SteadAgentControlService::Cancel(int32_t tab_id) {
+@@ -2296,11 +2339,78 @@ void SteadAgentControlService::Cancel(int32_t tab_id) {
    pending_action_by_tab_.erase(tab_id);
    ClearApprovalGrantsForTab(tab_id);
    ClearPendingConfirmationsForTab(tab_id);
@@ -158,6 +159,40 @@ index 46fb0fb..d3be4ca 100644
 +  context->url = url.spec();
 +  context->title = base::UTF16ToUTF8(contents->GetTitle());
 +  std::move(callback).Run(std::move(context));
++}
++
++void SteadAgentControlService::ListOpenTabContexts(
++    ListOpenTabContextsCallback callback) {
++  std::vector<mojom::TabContextInfoPtr> contexts;
++  base::flat_set<int32_t> seen_tab_ids;
++  for (BrowserWindowInterface* browser : GetAllBrowserWindowInterfaces()) {
++    if (!browser || browser->GetProfile() != profile_ ||
++        !browser->GetTabStripModel()) {
++      continue;
++    }
++    TabStripModel* tab_strip = browser->GetTabStripModel();
++    for (int index = 0; index < tab_strip->count(); ++index) {
++      content::WebContents* contents = tab_strip->GetWebContentsAt(index);
++      if (!contents) {
++        continue;
++      }
++      const GURL& url = contents->GetLastCommittedURL();
++      if (!url.SchemeIsHTTPOrHTTPS()) {
++        continue;
++      }
++      const SessionID session_id = sessions::SessionTabHelper::IdForTab(contents);
++      if (!session_id.is_valid() ||
++          !seen_tab_ids.insert(session_id.id()).second) {
++        continue;
++      }
++      auto context = mojom::TabContextInfo::New();
++      context->tab_id = session_id.id();
++      context->url = url.spec();
++      context->title = base::UTF16ToUTF8(contents->GetTitle());
++      contexts.push_back(std::move(context));
++    }
++  }
++  std::move(callback).Run(std::move(contexts));
 +}
 +
  void SteadAgentControlService::ListTabs(ListTabsCallback callback) {
@@ -246,11 +281,12 @@ diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
 index e1fff92..f7281fc 100644
 --- a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
 +++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
-@@ -172,6 +172,7 @@ class SteadAgentControlService : public KeyedService,
+@@ -172,6 +172,8 @@ class SteadAgentControlService : public KeyedService,
    void GetAuditLog(uint32_t max_entries, GetAuditLogCallback callback) override;
    void RespondToConfirmation(int32_t action_id, bool approve) override;
    void Cancel(int32_t tab_id) override;
 +  void GetActiveTabContext(GetActiveTabContextCallback callback) override;
++  void ListOpenTabContexts(ListOpenTabContextsCallback callback) override;
  
   private:
    class PrivateBrowserControl;
