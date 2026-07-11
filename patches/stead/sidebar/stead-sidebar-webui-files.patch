@@ -56,18 +56,23 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.c
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,68 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
 +
 +#include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
 +
++#include <memory>
++
 +#include "base/functional/bind.h"
 +#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/webui/favicon_source.h"
 +#include "chrome/common/webui_url_constants.h"
 +#include "chrome/grit/stead_sidebar_resources.h"
 +#include "chrome/grit/stead_sidebar_resources_map.h"
++#include "components/favicon_base/favicon_url_parser.h"
++#include "content/public/browser/url_data_source.h"
 +#include "content/public/browser/web_ui.h"
 +#include "content/public/browser/web_ui_data_source.h"
 +#include "services/network/public/mojom/content_security_policy.mojom.h"
@@ -81,6 +86,9 @@ new file mode 100644
 +                          base::Unretained(this)));
 +
 +  Profile* profile = Profile::FromWebUI(web_ui);
++  content::URLDataSource::Add(
++      profile, std::make_unique<FaviconSource>(
++                   profile, chrome::FaviconUrlFormat::kFavicon2));
 +  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
 +      profile, chrome::kSteadSidebarHost);
 +
