@@ -1,0 +1,90 @@
+--- a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+@@ -1491,4 +1491,6 @@ class SteadAgentControlService::PrivateBrowserControl {
+   content::WebContents* TabForDriveOverlay(int32_t tab_id) {
+     return FindTabById(tab_id);
+   }
++  void EnsureAgentOwnedTabLocked(int32_t tab_id);
++  void ReleaseAgentOwnedTab(int32_t tab_id);
+   bool IsAgentOwnedTab(int32_t tab_id) const;
+@@ -2343,5 +2345,6 @@ void SteadAgentControlService::Cancel(int32_t tab_id) {
+   pending_action_by_tab_.erase(tab_id);
+   ClearApprovalGrantsForTab(tab_id);
+   ClearPendingConfirmationsForTab(tab_id);
++  browser_control_->ReleaseAgentOwnedTab(tab_id);
+   ClearTabDriving(tab_id);
+   for (auto& observer : console_observers_) {
+@@ -2506,2 +2509,4 @@ class SteadAgentControlService::PrivateBrowserControl {
+   base::flat_set<int32_t> agent_owned_tabs_;
++  base::flat_map<int32_t, content::WebContents::ScopedIgnoreInputEvents>
++      agent_input_blocks_;
+ };
+@@ -3747,5 +3752,7 @@ mojom::ActionResultPtr SteadAgentControlService::PrivateBrowserControl::OpenTab(
+                           kAgentTabGroupTitle,
+                           tab_groups::TabGroupColorId::kCyan));
+       }
++      agent_input_blocks_.insert_or_assign(tab_id.id(),
++                                           opened->IgnoreInputEvents());
+     }
+   }
+@@ -5761,6 +5768,9 @@ void SteadAgentControlService::CheckDrivingIdle(int32_t tab_id) {
+   if (last == last_drive_action_by_tab_.end()) {
+     return;
+   }
++  if (browser_control_->IsAgentOwnedTab(tab_id)) {
++    return;
++  }
+   if (base::TimeTicks::Now() - last->second >= kDrivingIdleTimeout) {
+     ClearTabDriving(tab_id);
+   }
+@@ -6054,5 +6064,6 @@ void SteadAgentControlService::PrivateBrowserControl::ClearTabState(
+   snapshot_indexes_.erase(tab_id);
+   scoped_ax_modes_.erase(tab_id);
+   agent_owned_tabs_.erase(tab_id);
++  agent_input_blocks_.erase(tab_id);
+ }
+ 
+@@ -6077,4 +6088,37 @@ bool SteadAgentControlService::PrivateBrowserControl::IsAgentOwnedTab(
+   return agent_owned_tabs_.contains(tab_id);
+ }
+ 
++void SteadAgentControlService::PrivateBrowserControl::EnsureAgentOwnedTabLocked(
++    int32_t tab_id) {
++  if (IsAgentOwnedTab(tab_id)) {
++    broker_->UpdateDriveOverlay(tab_id, /*show=*/true);
++  }
++}
++
++void SteadAgentControlService::PrivateBrowserControl::ReleaseAgentOwnedTab(
++    int32_t tab_id) {
++  if (!agent_owned_tabs_.erase(tab_id)) {
++    return;
++  }
++  agent_input_blocks_.erase(tab_id);
++  content::WebContents* contents = FindTabById(tab_id);
++  if (!contents) {
++    return;
++  }
++  for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
++    if (!window || !SameProfile(window->GetProfile(), broker_->profile_)) {
++      continue;
++    }
++    TabStripModel* tab_strip = window->GetTabStripModel();
++    const int index = tab_strip ? tab_strip->GetIndexOfWebContents(contents)
++                                : TabStripModel::kNoTab;
++    if (index != TabStripModel::kNoTab &&
++        tab_strip->GetTabGroupForTab(index).has_value()) {
++      tab_strip->RemoveFromGroup({index});
++      break;
++    }
++  }
++  broker_->UpdateDriveOverlay(tab_id, /*show=*/false);
++}
++
+ mojom::AxNodePtr SteadAgentControlService::PrivateBrowserControl::BuildAxNode(
+@@ -6273,4 +6318,5 @@ void SteadAgentControlService::OnNavigationCommitted(
+   }
+   browser_control_->InvalidateSnapshotForTab(tab_id);
++  browser_control_->EnsureAgentOwnedTabLocked(tab_id);
+ 
+   const int32_t originating_action_id = PeekPendingActionForTab(tab_id);

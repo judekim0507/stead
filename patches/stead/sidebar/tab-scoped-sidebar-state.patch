@@ -1,0 +1,96 @@
+--- a/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.h
++++ b/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.h
+@@ -5,5 +5,8 @@
+ #ifndef CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_READING_LIST_READING_LIST_SIDE_PANEL_COORDINATOR_H_
+ #define CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_READING_LIST_READING_LIST_SIDE_PANEL_COORDINATOR_H_
+ 
++#include <map>
++
+ #include "base/memory/raw_ref.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+ #include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
+@@ -17,5 +20,5 @@ class TabStripModel;
+ 
+ // ReadingListSidePanelCoordinator handles the creation and registration of the
+ // bookmarks SidePanelEntry.
+-class ReadingListSidePanelCoordinator {
++class ReadingListSidePanelCoordinator : public TabStripModelObserver {
+  public:
+@@ -36,7 +39,14 @@ class ReadingListSidePanelCoordinator {
+   void CreateAndRegisterEntry(SidePanelRegistry* global_registry);
+ 
+  private:
++  void OnTabStripModelChanged(
++      TabStripModel* tab_strip_model,
++      const TabStripModelChange& change,
++      const TabStripSelectionChange& selection) override;
++
++  const raw_ref<BrowserWindowInterface> interface_;
+   const raw_ref<Profile> profile_;
+   const raw_ref<TabStripModel> tab_strip_model_;
++  std::map<int32_t, bool> open_by_tab_;
+ 
+   ui::ScopedUnownedUserData<ReadingListSidePanelCoordinator>
+--- a/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.cc
++++ b/chrome/browser/ui/views/side_panel/reading_list/reading_list_side_panel_coordinator.cc
+@@ -15,6 +15,7 @@
+ #include "chrome/browser/ui/side_panel/side_panel_registry.h"
+ #include "chrome/browser/ui/side_panel/side_panel_ui.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/sessions/session_tab_helper.h"
+ #include "chrome/browser/ui/views/side_panel/stead_sidebar/stead_sidebar_side_panel_web_view.h"
+ 
+ namespace {
+@@ -37,10 +38,49 @@ ReadingListSidePanelCoordinator::ReadingListSidePanelCoordinator(
+     BrowserWindowInterface* interface,
+     Profile* profile,
+     TabStripModel* tab_strip_model)
+-    : profile_(CHECK_DEREF(profile)),
++    : interface_(CHECK_DEREF(interface)),
++      profile_(CHECK_DEREF(profile)),
+       tab_strip_model_(CHECK_DEREF(tab_strip_model)),
+-      scoped_unowned_user_data_(interface->GetUnownedUserDataHost(), *this) {}
++      scoped_unowned_user_data_(interface->GetUnownedUserDataHost(), *this) {
++  tab_strip_model_->AddObserver(this);
++}
+ 
+-ReadingListSidePanelCoordinator::~ReadingListSidePanelCoordinator() = default;
++ReadingListSidePanelCoordinator::~ReadingListSidePanelCoordinator() {
++  tab_strip_model_->RemoveObserver(this);
++}
++
++void ReadingListSidePanelCoordinator::OnTabStripModelChanged(
++    TabStripModel* tab_strip_model,
++    const TabStripModelChange& change,
++    const TabStripSelectionChange& selection) {
++  if (!selection.active_tab_changed()) {
++    return;
++  }
++  SidePanelUI* side_panel_ui = interface_->GetFeatures().side_panel_ui();
++  const SidePanelEntry::Key key(SidePanelEntry::Id::kReadingList);
++  if (selection.old_contents) {
++    const SessionID old_id =
++        sessions::SessionTabHelper::IdForTab(selection.old_contents);
++    if (old_id.is_valid()) {
++      open_by_tab_[old_id.id()] = side_panel_ui->IsSidePanelEntryShowing(key);
++    }
++  }
++  auto next = open_by_tab_.end();
++  if (selection.new_contents) {
++    const SessionID new_id =
++        sessions::SessionTabHelper::IdForTab(selection.new_contents);
++    if (new_id.is_valid()) {
++      next = open_by_tab_.find(new_id.id());
++    }
++  }
++  const bool should_show =
++      next != open_by_tab_.end() && next->second;
++  const bool is_showing = side_panel_ui->IsSidePanelEntryShowing(key);
++  if (should_show && !is_showing) {
++    side_panel_ui->Show(key);
++  } else if (!should_show && is_showing) {
++    side_panel_ui->Close();
++  }
++}
+ 
+ void ReadingListSidePanelCoordinator::CreateAndRegisterEntry(

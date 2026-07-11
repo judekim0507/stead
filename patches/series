@@ -31,6 +31,7 @@ stead/sidebar/register-stead-sidebar.patch
 stead/sidebar/sidebar-resources-dep.patch
 stead/sidebar/repurpose-reading-list-side-panel.patch
 stead/sidebar/align-sidebar-content-edge.patch
+stead/sidebar/tab-scoped-sidebar-state.patch
 stead/sidebar/ask-stead-button.patch
 stead/sidebar/show-ask-stead-toolbar-label.patch
 stead/sidebar/pin-ask-stead-by-default.patch
@@ -53,4 +54,5 @@ stead/brain/brain-broker.patch
 # stead/settings/agent-settings-page.patch
 stead/settings/stead-ai-settings-link.patch
 stead/agent-control/drive-overlay-and-tab-context.patch
+stead/agent-control/agent-tab-takeover.patch
 stead/brain/replay-ready-to-new-observers.patch
