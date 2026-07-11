@@ -103,7 +103,7 @@ new file mode 100644
 +      network::mojom::CSPDirectiveName::FontSrc, "font-src 'self';");
 +  source->OverrideContentSecurityPolicy(
 +      network::mojom::CSPDirectiveName::ImgSrc,
-+      "img-src 'self' data: chrome://resources chrome://theme;");
++      "img-src 'self' data: chrome://resources chrome://theme chrome://favicon2;");
 +
 +  // Svelte hydration assigns innerHTML; Trusted Types would reject it.
 +  source->DisableTrustedTypesCSP();
