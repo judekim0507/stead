@@ -37,7 +37,7 @@
  #include "chrome/browser/ui/side_panel/side_panel_registry.h"
  #include "chrome/browser/ui/side_panel/side_panel_ui.h"
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
-+#include "chrome/browser/sessions/session_tab_helper.h"
++#include "components/sessions/content/session_tab_helper.h"
  #include "chrome/browser/ui/views/side_panel/stead_sidebar/stead_sidebar_side_panel_web_view.h"
  
  namespace {
