@@ -91,6 +91,7 @@ class GithubResyncSteadTest(unittest.TestCase):
                 '#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"\n'
                 '#include "chrome/browser/ui/side_panel/side_panel_entry.h"\n'
                 '#include "chrome/browser/ui/side_panel/side_panel_registry.h"\n'
+                '#include "chrome/browser/sessions/session_tab_helper.h"\n'
                 "\n"
                 "std::unique_ptr<views::View> CreateReadingListWebView(\n"
                 "    Profile* profile,\n"
@@ -117,6 +118,10 @@ class GithubResyncSteadTest(unittest.TestCase):
             self.assertIn("profile, scope, std::move(close_cb)", text)
             self.assertIn("entry->set_should_show_header(false);", text)
             self.assertIn('side_panel_ui.h', text)
+            self.assertIn(
+                'components/sessions/content/session_tab_helper.h', text
+            )
+            self.assertNotIn('chrome/browser/sessions/session_tab_helper.h', text)
             self.assertNotIn("profile, scope, base::RepeatingClosure()", text)
 
 

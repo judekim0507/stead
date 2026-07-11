@@ -219,6 +219,14 @@ path = Path(sys.argv[1])
 text = path.read_text()
 original = text
 
+# Resumed archives may retain the original tab-scoped sidebar include because
+# shared-file hunks are forward-applied with patch -N. Chromium moved this
+# helper to components/sessions; normalize the already-applied source directly.
+text = text.replace(
+    '#include "chrome/browser/sessions/session_tab_helper.h"',
+    '#include "components/sessions/content/session_tab_helper.h"',
+)
+
 required_includes = {
     '#include "base/check_deref.h"': [
         '#include <utility>',
