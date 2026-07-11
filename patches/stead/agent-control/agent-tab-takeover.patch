@@ -25,7 +25,7 @@
                            tab_groups::TabGroupColorId::kCyan));
        }
 +      agent_input_blocks_.insert_or_assign(tab_id.id(),
-+                                           opened->IgnoreInputEvents());
++                                           opened->IgnoreInputEvents(std::nullopt));
      }
    }
 @@ -5761,6 +5768,9 @@ void SteadAgentControlService::CheckDrivingIdle(int32_t tab_id) {
