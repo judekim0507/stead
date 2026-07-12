@@ -55,4 +55,5 @@ stead/brain/brain-broker.patch
 stead/settings/stead-ai-settings-link.patch
 stead/agent-control/drive-overlay-and-tab-context.patch
 stead/agent-control/agent-tab-takeover.patch
+stead/agent-control/agent-session-ownership.patch
 stead/brain/replay-ready-to-new-observers.patch
