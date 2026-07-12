@@ -240,6 +240,8 @@ required_includes = {
     ],
     '#include "chrome/browser/ui/side_panel/side_panel_registry.h"': [
         '#include "chrome/browser/ui/side_panel/side_panel_ui.h"',
+        '#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"',
+        '#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"',
     ],
 }
 for anchor, includes in required_includes.items():
@@ -294,6 +296,35 @@ elif current_registration not in text:
 if text != original:
     path.write_text(text)
     print("normalized Ask Stead side-panel coordinator")
+PY
+fi
+
+_agent_control_service="$_src_dir/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc"
+if [ -f "$_agent_control_service" ]; then
+  python3 - "$_agent_control_service" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+original = text
+
+# agent-tab-takeover.patch originally used Chromium's old zero-argument API.
+# A resumed archive can retain that call when agent-session-ownership.patch is
+# forward-applied with patch -N, even though clean builds use std::nullopt.
+text = re.sub(
+    r"(opened->IgnoreInputEvents)\(\)",
+    r"\1(std::nullopt)",
+    text,
+)
+
+if re.search(r"opened->IgnoreInputEvents\(\)", text):
+    raise SystemExit("error: stale zero-argument IgnoreInputEvents call remains")
+
+if text != original:
+    path.write_text(text)
+    print("normalized resumed Stead agent input blockade")
 PY
 fi
 

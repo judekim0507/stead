@@ -112,6 +112,18 @@ class GithubResyncSteadTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            agent_control = (
+                source
+                / "chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc"
+            )
+            agent_control.parent.mkdir(parents=True)
+            agent_control.write_text(
+                "void Block(content::WebContents* opened) {\n"
+                "  blocks.insert_or_assign(1, opened->IgnoreInputEvents());\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
             subprocess.run([str(normalizer), str(source)], check=True)
 
             text = coordinator.read_text(encoding="utf-8")
@@ -123,6 +135,12 @@ class GithubResyncSteadTest(unittest.TestCase):
             )
             self.assertNotIn('chrome/browser/sessions/session_tab_helper.h', text)
             self.assertNotIn("profile, scope, base::RepeatingClosure()", text)
+            self.assertIn("stead_agent_control_service.h", text)
+            self.assertIn("stead_agent_control_service_factory.h", text)
+
+            agent_text = agent_control.read_text(encoding="utf-8")
+            self.assertIn("opened->IgnoreInputEvents(std::nullopt)", agent_text)
+            self.assertNotIn("opened->IgnoreInputEvents()", agent_text)
 
 
 if __name__ == "__main__":
