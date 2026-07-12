@@ -296,6 +296,10 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 '                          base::Unretained(this)));\n'
                 '}\n'
                 'void SteadSidebarUI::HandleClose(const base::ListValue&) {}\n'
+                'void LegacyNavigation() {\n'
+                '  chrome::NavigateParams params(nullptr, GURL(), ui::PAGE_TRANSITION_LINK);\n'
+                '  chrome::Navigate(&params);\n'
+                '}\n'
                 'void SteadSidebarUI::BindInterface(\n'
                 '    mojo::PendingReceiver<stead::mojom::ControlConsole> receiver) {}\n'
                 'WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)\n',
@@ -320,7 +324,9 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             self.assertIn("&SteadSidebarUI::HandleOpenFullChat", cc_text)
             self.assertIn("chrome::FindBrowserWithTab", cc_text)
             self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", cc_text)
-            self.assertIn("chrome::Navigate(&params);", cc_text)
+            self.assertIn("NavigateParams params(", cc_text)
+            self.assertIn("Navigate(&params);", cc_text)
+            self.assertNotIn("chrome::NavigateParams", cc_text)
             self.assertIn(
                 '#include "chrome/browser/ui/navigator/browser_navigator.h"',
                 cc_text,

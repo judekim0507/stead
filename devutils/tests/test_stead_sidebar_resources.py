@@ -157,7 +157,8 @@ class SteadSidebarResourcesTest(unittest.TestCase):
         self.assertIn("HandleOpenFullChat", text)
         self.assertIn("chrome::FindBrowserWithTab", text)
         self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", text)
-        self.assertIn("chrome::Navigate(&params);", text)
+        self.assertIn("NavigateParams params(", text)
+        self.assertIn("Navigate(&params);", text)
 
     def test_settings_webui_binders_are_registered(self):
         repo_root = Path(__file__).resolve().parents[2]

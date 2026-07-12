@@ -189,6 +189,8 @@ original_h = h
 cc = cc.replace('#include "chrome/browser/ui/browser_navigator.h"\n', '')
 cc = cc.replace('#include "chrome/browser/ui/browser_navigator_params.h"\n', '')
 cc = cc.replace('#include "net/base/escape.h"\n', '')
+cc = cc.replace('chrome::NavigateParams params(', 'NavigateParams params(')
+cc = cc.replace('chrome::Navigate(&params);', 'Navigate(&params);')
 
 include_anchor = '#include "chrome/browser/profiles/profile.h"\n'
 required_cc_includes = (
@@ -241,9 +243,9 @@ void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
     url.append(base::EscapeQueryParamValue(args[0].GetString(), true));
   }
 
-  chrome::NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
+  NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-  chrome::Navigate(&params);
+  Navigate(&params);
 }
 
 '''

@@ -151,9 +151,9 @@ new file mode 100644
 +    url.append(base::EscapeQueryParamValue(args[0].GetString(), true));
 +  }
 +
-+  chrome::NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
++  NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
 +  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-+  chrome::Navigate(&params);
++  Navigate(&params);
 +}
 +
 +WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)
