@@ -284,6 +284,8 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 '#include <memory>\n'
                 '#include "chrome/browser/profiles/profile.h"\n'
                 '#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"\n'
+                '#include "chrome/browser/ui/browser_navigator.h"\n'
+                '#include "chrome/browser/ui/browser_navigator_params.h"\n'
                 '#include "content/public/browser/web_ui_data_source.h"\n'
                 'SteadSidebarUI::SteadSidebarUI(content::WebUI* web_ui) {\n'
                 '  web_ui->RegisterMessageCallback(\n'
@@ -317,6 +319,13 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             self.assertIn("chrome::FindBrowserWithTab", cc_text)
             self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", cc_text)
             self.assertIn("chrome::Navigate(&params);", cc_text)
+            self.assertIn(
+                '#include "chrome/browser/ui/navigator/browser_navigator.h"',
+                cc_text,
+            )
+            self.assertNotIn(
+                '#include "chrome/browser/ui/browser_navigator.h"', cc_text
+            )
             self.assertEqual(h_text.count("HandleOpenFullChat"), 1)
 
 

@@ -186,14 +186,17 @@ h = h_path.read_text()
 original_cc = cc
 original_h = h
 
+cc = cc.replace('#include "chrome/browser/ui/browser_navigator.h"\n', '')
+cc = cc.replace('#include "chrome/browser/ui/browser_navigator_params.h"\n', '')
+
 include_anchor = '#include "chrome/browser/profiles/profile.h"\n'
 required_cc_includes = (
     '#include "chrome/browser/ui/browser.h"\n'
     '#include "chrome/browser/ui/browser_finder.h"\n'
-    '#include "chrome/browser/ui/browser_navigator.h"\n'
-    '#include "chrome/browser/ui/browser_navigator_params.h"\n'
+    '#include "chrome/browser/ui/navigator/browser_navigator.h"\n'
+    '#include "chrome/browser/ui/navigator/browser_navigator_params.h"\n'
 )
-if '#include "chrome/browser/ui/browser_navigator.h"' not in cc:
+if '#include "chrome/browser/ui/navigator/browser_navigator.h"' not in cc:
     if include_anchor not in cc:
         raise SystemExit("error: Stead sidebar profile include anchor is missing")
     cc = cc.replace(include_anchor, include_anchor + required_cc_includes, 1)
