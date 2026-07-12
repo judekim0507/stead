@@ -1808,8 +1808,8 @@ index c90440a..dc14ac8 100644
 @@ -12,3 +12,4 @@
  #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
 +#include "chrome/browser/ui/stead/brain/stead_brain_service_factory.h"
- #include "chrome/browser/ui/webui/favicon_source.h"
- #include "chrome/common/webui_url_constants.h"
+ #include "chrome/browser/ui/browser.h"
+ #include "chrome/browser/ui/browser_finder.h"
 @@ -57,3 +58,9 @@ void SteadSidebarUI::BindInterface(
  }
  

@@ -268,6 +268,57 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             self.assertNotIn('"includes": [100]', normalized)
             self.assertNotIn('"includes": [60]', normalized)
 
+    def test_adds_native_full_chat_navigation_to_resumed_sidebar(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        script = repo_root / ".github/scripts/github_normalize_chromium_sources.sh"
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            src = Path(tmpdirname)
+            sidebar = src / "chrome/browser/ui/webui/side_panel/stead_sidebar"
+            sidebar.mkdir(parents=True)
+            cc = sidebar / "stead_sidebar_ui.cc"
+            header = sidebar / "stead_sidebar_ui.h"
+            cc.write_text(
+                '#include "chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"\n'
+                '#include <utility>\n'
+                '#include <memory>\n'
+                '#include "chrome/browser/profiles/profile.h"\n'
+                '#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"\n'
+                '#include "content/public/browser/web_ui_data_source.h"\n'
+                'SteadSidebarUI::SteadSidebarUI(content::WebUI* web_ui) {\n'
+                '  web_ui->RegisterMessageCallback(\n'
+                '      "closeSteadSidebar",\n'
+                '      base::BindRepeating(&SteadSidebarUI::HandleClose,\n'
+                '                          base::Unretained(this)));\n'
+                '}\n'
+                'void SteadSidebarUI::HandleClose(const base::ListValue&) {}\n'
+                'void SteadSidebarUI::BindInterface(\n'
+                '    mojo::PendingReceiver<stead::mojom::ControlConsole> receiver) {}\n'
+                'WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)\n',
+                encoding="utf-8",
+            )
+            header.write_text(
+                '#include <string_view>\n'
+                'class SteadSidebarUI {\n'
+                ' private:\n'
+                '  void HandleClose(const base::ListValue&);\n'
+                '};\n',
+                encoding="utf-8",
+            )
+
+            subprocess.run(["bash", str(script), str(src)], check=True)
+            subprocess.run(["bash", str(script), str(src)], check=True)
+
+            cc_text = cc.read_text(encoding="utf-8")
+            h_text = header.read_text(encoding="utf-8")
+            self.assertEqual(cc_text.count('"openSteadFullChat"'), 1)
+            self.assertEqual(cc_text.count("HandleOpenFullChat("), 1)
+            self.assertIn("&SteadSidebarUI::HandleOpenFullChat", cc_text)
+            self.assertIn("chrome::FindBrowserWithTab", cc_text)
+            self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", cc_text)
+            self.assertIn("chrome::Navigate(&params);", cc_text)
+            self.assertEqual(h_text.count("HandleOpenFullChat"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,51 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -10,6 +10,7 @@ new file mode 100644
 +#ifndef CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_UI_H_
 +#define CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_STEAD_SIDEBAR_STEAD_SIDEBAR_UI_H_
 +
++#include <string>
 +#include <string_view>
 +
 +#include "base/values.h"
@@ -47,6 +48,7 @@ new file mode 100644
 +
 + private:
 +  void HandleClose(const base::ListValue&);
++  void HandleOpenFullChat(const base::ListValue& args);
 +
 +  WEB_UI_CONTROLLER_TYPE_DECL();
 +};
@@ -56,7 +58,7 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.c
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,98 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -67,6 +69,10 @@ new file mode 100644
 +
 +#include "base/functional/bind.h"
 +#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser.h"
++#include "chrome/browser/ui/browser_finder.h"
++#include "chrome/browser/ui/browser_navigator.h"
++#include "chrome/browser/ui/browser_navigator_params.h"
 +#include "chrome/browser/ui/webui/favicon_source.h"
 +#include "chrome/common/webui_url_constants.h"
 +#include "chrome/grit/stead_sidebar_resources.h"
@@ -75,6 +81,7 @@ new file mode 100644
 +#include "content/public/browser/url_data_source.h"
 +#include "content/public/browser/web_ui.h"
 +#include "content/public/browser/web_ui_data_source.h"
++#include "net/base/escape.h"
 +#include "services/network/public/mojom/content_security_policy.mojom.h"
 +#include "ui/webui/webui_util.h"
 +
@@ -83,6 +90,10 @@ new file mode 100644
 +  web_ui->RegisterMessageCallback(
 +      "closeSteadSidebar",
 +      base::BindRepeating(&SteadSidebarUI::HandleClose,
++                          base::Unretained(this)));
++  web_ui->RegisterMessageCallback(
++      "openSteadFullChat",
++      base::BindRepeating(&SteadSidebarUI::HandleOpenFullChat,
 +                          base::Unretained(this)));
 +
 +  Profile* profile = Profile::FromWebUI(web_ui);
@@ -123,6 +134,26 @@ new file mode 100644
 +  if (embedder()) {
 +    embedder()->CloseUI();
 +  }
++}
++
++void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
++  content::WebContents* sidebar_contents = web_ui()->GetWebContents();
++  content::WebContents* tab_contents = sidebar_contents->GetOuterWebContents();
++  Browser* browser =
++      chrome::FindBrowserWithTab(tab_contents ? tab_contents : sidebar_contents);
++  if (!browser) {
++    return;
++  }
++
++  std::string url(chrome::kSteadChatURL);
++  if (!args.empty() && args[0].is_string() && !args[0].GetString().empty()) {
++    url.append("?session=");
++    url.append(net::EscapeQueryParamValue(args[0].GetString(), true));
++  }
++
++  chrome::NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
++  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
++  chrome::Navigate(&params);
 +}
 +
 +WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)

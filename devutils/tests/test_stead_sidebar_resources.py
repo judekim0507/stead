@@ -148,6 +148,17 @@ class SteadSidebarResourcesTest(unittest.TestCase):
         self.assertIn('"closeSteadSidebar"', text)
         self.assertIn("embedder()->CloseUI();", text)
 
+    def test_sidebar_webui_opens_full_chat_through_native_navigation(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        text = (
+            repo_root / "patches/stead/sidebar/stead-sidebar-webui-files.patch"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"openSteadFullChat"', text)
+        self.assertIn("HandleOpenFullChat", text)
+        self.assertIn("chrome::FindBrowserWithTab", text)
+        self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", text)
+        self.assertIn("chrome::Navigate(&params);", text)
+
     def test_settings_webui_binders_are_registered(self):
         repo_root = Path(__file__).resolve().parents[2]
         patch = (

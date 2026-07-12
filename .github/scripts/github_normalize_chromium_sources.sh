@@ -172,6 +172,109 @@ if text != original:
 PY
 fi
 
+_stead_sidebar_cc="$_src_dir/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc"
+_stead_sidebar_h="$_src_dir/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
+if [ -f "$_stead_sidebar_cc" ] && [ -f "$_stead_sidebar_h" ]; then
+  python3 - "$_stead_sidebar_cc" "$_stead_sidebar_h" <<'PY'
+import sys
+from pathlib import Path
+
+cc_path = Path(sys.argv[1])
+h_path = Path(sys.argv[2])
+cc = cc_path.read_text()
+h = h_path.read_text()
+original_cc = cc
+original_h = h
+
+include_anchor = '#include "chrome/browser/profiles/profile.h"\n'
+required_cc_includes = (
+    '#include "chrome/browser/ui/browser.h"\n'
+    '#include "chrome/browser/ui/browser_finder.h"\n'
+    '#include "chrome/browser/ui/browser_navigator.h"\n'
+    '#include "chrome/browser/ui/browser_navigator_params.h"\n'
+)
+if '#include "chrome/browser/ui/browser_navigator.h"' not in cc:
+    if include_anchor not in cc:
+        raise SystemExit("error: Stead sidebar profile include anchor is missing")
+    cc = cc.replace(include_anchor, include_anchor + required_cc_includes, 1)
+if '#include "net/base/escape.h"' not in cc:
+    anchor = '#include "content/public/browser/web_ui_data_source.h"\n'
+    if anchor not in cc:
+        raise SystemExit("error: Stead sidebar WebUI include anchor is missing")
+    cc = cc.replace(anchor, anchor + '#include "net/base/escape.h"\n', 1)
+
+if '"openSteadFullChat"' not in cc:
+    close_callback = '''\
+  web_ui->RegisterMessageCallback(
+      "closeSteadSidebar",
+      base::BindRepeating(&SteadSidebarUI::HandleClose,
+                          base::Unretained(this)));
+'''
+    open_callback = '''\
+  web_ui->RegisterMessageCallback(
+      "openSteadFullChat",
+      base::BindRepeating(&SteadSidebarUI::HandleOpenFullChat,
+                          base::Unretained(this)));
+'''
+    if close_callback not in cc:
+        raise SystemExit("error: Stead sidebar close callback anchor is missing")
+    cc = cc.replace(close_callback, close_callback + open_callback, 1)
+
+if 'void SteadSidebarUI::HandleOpenFullChat' not in cc:
+    handler = '''\
+void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
+  content::WebContents* sidebar_contents = web_ui()->GetWebContents();
+  content::WebContents* tab_contents = sidebar_contents->GetOuterWebContents();
+  Browser* browser =
+      chrome::FindBrowserWithTab(tab_contents ? tab_contents : sidebar_contents);
+  if (!browser) {
+    return;
+  }
+
+  std::string url(chrome::kSteadChatURL);
+  if (!args.empty() && args[0].is_string() && !args[0].GetString().empty()) {
+    url.append("?session=");
+    url.append(net::EscapeQueryParamValue(args[0].GetString(), true));
+  }
+
+  chrome::NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  chrome::Navigate(&params);
+}
+
+'''
+    bind_anchor = 'void SteadSidebarUI::BindInterface('
+    at = cc.find(bind_anchor)
+    if at == -1:
+        at = cc.find('WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)')
+    if at == -1:
+        raise SystemExit("error: Stead sidebar handler insertion anchor is missing")
+    cc = cc[:at] + handler + cc[at:]
+
+if '#include <string>\n' not in h:
+    anchor = '#include <string_view>\n'
+    if anchor not in h:
+        raise SystemExit("error: Stead sidebar string include anchor is missing")
+    h = h.replace(anchor, '#include <string>\n' + anchor, 1)
+if 'void HandleOpenFullChat(const base::ListValue& args);' not in h:
+    anchor = '  void HandleClose(const base::ListValue&);\n'
+    if anchor not in h:
+        raise SystemExit("error: Stead sidebar close declaration anchor is missing")
+    h = h.replace(
+        anchor,
+        anchor + '  void HandleOpenFullChat(const base::ListValue& args);\n',
+        1,
+    )
+
+if cc != original_cc:
+    cc_path.write_text(cc)
+if h != original_h:
+    h_path.write_text(h)
+if cc != original_cc or h != original_h:
+    print("normalized resumed Stead full-chat navigation")
+PY
+fi
+
 _pinned_toolbar_button="$_src_dir/chrome/browser/ui/views/toolbar/pinned_action_toolbar_button.cc"
 if [ -f "$_pinned_toolbar_button" ]; then
   python3 - "$_pinned_toolbar_button" <<'PY'
