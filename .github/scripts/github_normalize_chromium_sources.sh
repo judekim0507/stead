@@ -188,6 +188,7 @@ original_h = h
 
 cc = cc.replace('#include "chrome/browser/ui/browser_navigator.h"\n', '')
 cc = cc.replace('#include "chrome/browser/ui/browser_navigator_params.h"\n', '')
+cc = cc.replace('#include "net/base/escape.h"\n', '')
 
 include_anchor = '#include "chrome/browser/profiles/profile.h"\n'
 required_cc_includes = (
@@ -200,11 +201,11 @@ if '#include "chrome/browser/ui/navigator/browser_navigator.h"' not in cc:
     if include_anchor not in cc:
         raise SystemExit("error: Stead sidebar profile include anchor is missing")
     cc = cc.replace(include_anchor, include_anchor + required_cc_includes, 1)
-if '#include "net/base/escape.h"' not in cc:
-    anchor = '#include "content/public/browser/web_ui_data_source.h"\n'
+if '#include "base/strings/escape.h"' not in cc:
+    anchor = '#include "base/functional/bind.h"\n'
     if anchor not in cc:
-        raise SystemExit("error: Stead sidebar WebUI include anchor is missing")
-    cc = cc.replace(anchor, anchor + '#include "net/base/escape.h"\n', 1)
+        raise SystemExit("error: Stead sidebar base include anchor is missing")
+    cc = cc.replace(anchor, anchor + '#include "base/strings/escape.h"\n', 1)
 
 if '"openSteadFullChat"' not in cc:
     close_callback = '''\
@@ -237,7 +238,7 @@ void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
   std::string url(chrome::kSteadChatURL);
   if (!args.empty() && args[0].is_string() && !args[0].GetString().empty()) {
     url.append("?session=");
-    url.append(net::EscapeQueryParamValue(args[0].GetString(), true));
+    url.append(base::EscapeQueryParamValue(args[0].GetString(), true));
   }
 
   chrome::NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
