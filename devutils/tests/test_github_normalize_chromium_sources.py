@@ -264,7 +264,8 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             subprocess.run(["bash", str(script), str(src)], check=True)
 
             normalized = spec.read_text(encoding="utf-8")
-            self.assertEqual(normalized.count('"includes": [100]'), 2)
+            self.assertEqual(normalized.count('"includes": [256]'), 2)
+            self.assertNotIn('"includes": [100]', normalized)
             self.assertNotIn('"includes": [60]', normalized)
 
 
