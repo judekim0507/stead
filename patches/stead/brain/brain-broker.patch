@@ -137,7 +137,7 @@ index 0000000000000..b0bf93ec80ec
 +      => (BrainResult result);
 +  ListSessions() => (BrainResult result);
 +  LoadSession(string session_id) => (BrainResult result);
-+  SendMessage(string session_id, string text, BrainTabContext? tab_context,
++  SendMessage(string session_id, string text, array<BrainTabContext> tab_contexts,
 +      BrainModelSelection? model, BrainPermissionMode permission_mode)
 +      => (BrainResult result);
 +  CancelTurn(string session_id) => (BrainResult result);
@@ -281,7 +281,7 @@ new file mode 100644
 index 0000000000000..962a5a6a98f8
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.h
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,140 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -292,6 +292,7 @@ index 0000000000000..962a5a6a98f8
 +#include <memory>
 +#include <set>
 +#include <string>
++#include <vector>
 +
 +#include "base/containers/flat_map.h"
 +#include "base/files/file_path.h"
@@ -336,7 +337,7 @@ index 0000000000000..962a5a6a98f8
 +                   LoadSessionCallback callback) override;
 +  void SendMessage(const std::string& session_id,
 +                   const std::string& text,
-+                   mojom::BrainTabContextPtr tab_context,
++                   std::vector<mojom::BrainTabContextPtr> tab_contexts,
 +                   mojom::BrainModelSelectionPtr model,
 +                   mojom::BrainPermissionMode permission_mode,
 +                   SendMessageCallback callback) override;
@@ -426,7 +427,7 @@ new file mode 100644
 index 0000000000000..71246ae8e56d
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
-@@ -0,0 +1,1374 @@
+@@ -0,0 +1,1377 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -835,7 +836,7 @@ index 0000000000000..71246ae8e56d
 +
 +void SteadBrainService::SendMessage(const std::string& session_id,
 +                                    const std::string& text,
-+                                    mojom::BrainTabContextPtr tab_context,
++                                    std::vector<mojom::BrainTabContextPtr> tab_contexts,
 +                                    mojom::BrainModelSelectionPtr model,
 +                                    mojom::BrainPermissionMode permission_mode,
 +                                    SendMessageCallback callback) {
@@ -846,12 +847,16 @@ index 0000000000000..71246ae8e56d
 +  request.Set("permission_mode",
 +              PermissionModeToProtocolString(permission_mode));
 +  session_permission_modes_[session_id] = permission_mode;
-+  if (tab_context) {
-+    base::DictValue tab;
-+    tab.Set("tab_id", tab_context->tab_id);
-+    tab.Set("url", tab_context->url);
-+    tab.Set("title", tab_context->title);
-+    request.Set("tab_context", std::move(tab));
++  if (!tab_contexts.empty()) {
++    base::ListValue tabs;
++    for (const auto& tab_context : tab_contexts) {
++      base::DictValue tab;
++      tab.Set("tab_id", tab_context->tab_id);
++      tab.Set("url", tab_context->url);
++      tab.Set("title", tab_context->title);
++      tabs.Append(std::move(tab));
++    }
++    request.Set("tab_contexts", std::move(tabs));
 +  }
 +  if (model) {
 +    base::DictValue selection;

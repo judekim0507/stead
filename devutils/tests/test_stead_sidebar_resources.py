@@ -5,6 +5,16 @@ from pathlib import Path
 
 
 class SteadSidebarResourcesTest(unittest.TestCase):
+    def test_brain_send_message_preserves_all_attached_tabs(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        patch = repo_root / "patches/stead/brain/brain-broker.patch"
+        text = patch.read_text(encoding="utf-8")
+
+        self.assertIn("array<BrainTabContext> tab_contexts", text)
+        self.assertIn("std::vector<mojom::BrainTabContextPtr> tab_contexts", text)
+        self.assertIn('request.Set("tab_contexts", std::move(tabs))', text)
+        self.assertNotIn('request.Set("tab_context", std::move(tab))', text)
+
     def test_ask_stead_content_uses_the_resize_edge(self):
         repo_root = Path(__file__).resolve().parents[2]
         patch = repo_root / "patches/stead/sidebar/align-sidebar-content-edge.patch"

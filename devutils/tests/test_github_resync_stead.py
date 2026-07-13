@@ -142,6 +142,48 @@ class GithubResyncSteadTest(unittest.TestCase):
             self.assertIn("opened->IgnoreInputEvents(std::nullopt)", agent_text)
             self.assertNotIn("opened->IgnoreInputEvents()", agent_text)
 
+    def test_normalize_upgrades_resumed_brain_to_multi_tab_context(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        normalizer = repo_root / ".github/scripts/github_normalize_chromium_sources.sh"
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            brain = Path(tmpdirname) / "chrome/browser/ui/stead/brain"
+            brain.mkdir(parents=True)
+            (brain / "brain_console.mojom").write_text(
+                "SendMessage(string session_id, string text, BrainTabContext? tab_context,\n",
+                encoding="utf-8",
+            )
+            (brain / "stead_brain_service.h").write_text(
+                "#include <string>\n"
+                "void SendMessage(mojom::BrainTabContextPtr tab_context,\n"
+                "                 int model);\n",
+                encoding="utf-8",
+            )
+            (brain / "stead_brain_service.cc").write_text(
+                "void SendMessage(mojom::BrainTabContextPtr tab_context, int model) {\n"
+                "  if (tab_context) {\n"
+                "    base::DictValue tab;\n"
+                '    tab.Set("tab_id", tab_context->tab_id);\n'
+                '    tab.Set("url", tab_context->url);\n'
+                '    tab.Set("title", tab_context->title);\n'
+                '    request.Set("tab_context", std::move(tab));\n'
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            subprocess.run([str(normalizer), tmpdirname], check=True)
+            subprocess.run([str(normalizer), tmpdirname], check=True)
+
+            mojo = (brain / "brain_console.mojom").read_text(encoding="utf-8")
+            header = (brain / "stead_brain_service.h").read_text(encoding="utf-8")
+            source = (brain / "stead_brain_service.cc").read_text(encoding="utf-8")
+            self.assertIn("array<BrainTabContext> tab_contexts", mojo)
+            self.assertEqual(header.count("#include <vector>"), 1)
+            self.assertIn("std::vector<mojom::BrainTabContextPtr> tab_contexts", header)
+            self.assertIn('request.Set("tab_contexts", std::move(tabs))', source)
+            self.assertNotIn('request.Set("tab_context", std::move(tab))', source)
+
 
 if __name__ == "__main__":
     unittest.main()

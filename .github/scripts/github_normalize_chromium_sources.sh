@@ -469,6 +469,57 @@ def rewrite(rel, mutator):
     return False
 
 
+# Older resumed archives already contain the created brain broker files, so
+# `patch -N` cannot replace their single-tab SendMessage contract. Upgrade all
+# three generated/native layers before the current patch series is applied.
+rewrite(
+    "chrome/browser/ui/stead/brain/brain_console.mojom",
+    lambda text: text.replace(
+        "SendMessage(string session_id, string text, BrainTabContext? tab_context,",
+        "SendMessage(string session_id, string text, array<BrainTabContext> tab_contexts,",
+    ),
+)
+rewrite(
+    "chrome/browser/ui/stead/brain/stead_brain_service.h",
+    lambda text: (
+        text.replace(
+            "#include <string>\n",
+            "#include <string>\n#include <vector>\n",
+        )
+        if "#include <vector>" not in text
+        else text
+    ).replace(
+        "mojom::BrainTabContextPtr tab_context,",
+        "std::vector<mojom::BrainTabContextPtr> tab_contexts,",
+    ),
+)
+rewrite(
+    "chrome/browser/ui/stead/brain/stead_brain_service.cc",
+    lambda text: text.replace(
+        "mojom::BrainTabContextPtr tab_context,",
+        "std::vector<mojom::BrainTabContextPtr> tab_contexts,",
+    ).replace(
+        '  if (tab_context) {\n'
+        '    base::DictValue tab;\n'
+        '    tab.Set("tab_id", tab_context->tab_id);\n'
+        '    tab.Set("url", tab_context->url);\n'
+        '    tab.Set("title", tab_context->title);\n'
+        '    request.Set("tab_context", std::move(tab));\n'
+        '  }\n',
+        '  if (!tab_contexts.empty()) {\n'
+        '    base::ListValue tabs;\n'
+        '    for (const auto& tab_context : tab_contexts) {\n'
+        '      base::DictValue tab;\n'
+        '      tab.Set("tab_id", tab_context->tab_id);\n'
+        '      tab.Set("url", tab_context->url);\n'
+        '      tab.Set("title", tab_context->title);\n'
+        '      tabs.Append(std::move(tab));\n'
+        '    }\n'
+        '    request.Set("tab_contexts", std::move(tabs));\n'
+        '  }\n',
+    ),
+)
+
 # Older resumed archives can still contain frontend/backend hunks from the
 # disabled stead/settings/agent-settings-page.patch. Keeping that half-applied
 # page can make chrome://settings request interfaces that the current patch
