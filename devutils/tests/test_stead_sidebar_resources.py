@@ -155,7 +155,7 @@ class SteadSidebarResourcesTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('"openSteadFullChat"', text)
         self.assertIn("HandleOpenFullChat", text)
-        self.assertIn("chrome::FindBrowserWithTab", text)
+        self.assertIn("chrome::FindBrowserWithProfile", text)
         self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", text)
         self.assertIn("NavigateParams params(", text)
         self.assertIn("Navigate(&params);", text)

@@ -20,6 +20,7 @@ if [ -f "$_binder" ]; then
   python3 - "$_binder" <<'PY'
 import re
 import sys
+import re
 from pathlib import Path
 
 path = Path(sys.argv[1])
@@ -176,6 +177,7 @@ _stead_sidebar_cc="$_src_dir/chrome/browser/ui/webui/side_panel/stead_sidebar/st
 _stead_sidebar_h="$_src_dir/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h"
 if [ -f "$_stead_sidebar_cc" ] && [ -f "$_stead_sidebar_h" ]; then
   python3 - "$_stead_sidebar_cc" "$_stead_sidebar_h" <<'PY'
+import re
 import sys
 from pathlib import Path
 
@@ -191,6 +193,16 @@ cc = cc.replace('#include "chrome/browser/ui/browser_navigator_params.h"\n', '')
 cc = cc.replace('#include "net/base/escape.h"\n', '')
 cc = cc.replace('chrome::NavigateParams params(', 'NavigateParams params(')
 cc = cc.replace('chrome::Navigate(&params);', 'Navigate(&params);')
+cc = cc.replace('net::EscapeQueryParamValue(', 'base::EscapeQueryParamValue(')
+cc = re.sub(
+    r'  content::WebContents\* sidebar_contents = web_ui\(\)->GetWebContents\(\);\n'
+    r'  content::WebContents\* tab_contents = sidebar_contents->GetOuterWebContents\(\);\n'
+    r'  Browser\* browser =\n'
+    r'      chrome::FindBrowserWithTab\(tab_contents \? tab_contents : sidebar_contents\);',
+    '  Browser* browser =\n'
+    '      chrome::FindBrowserWithProfile(Profile::FromWebUI(web_ui()));',
+    cc,
+)
 
 include_anchor = '#include "chrome/browser/profiles/profile.h"\n'
 required_cc_includes = (
@@ -229,10 +241,8 @@ if '"openSteadFullChat"' not in cc:
 if 'void SteadSidebarUI::HandleOpenFullChat' not in cc:
     handler = '''\
 void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
-  content::WebContents* sidebar_contents = web_ui()->GetWebContents();
-  content::WebContents* tab_contents = sidebar_contents->GetOuterWebContents();
   Browser* browser =
-      chrome::FindBrowserWithTab(tab_contents ? tab_contents : sidebar_contents);
+      chrome::FindBrowserWithProfile(Profile::FromWebUI(web_ui()));
   if (!browser) {
     return;
   }

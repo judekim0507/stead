@@ -296,8 +296,15 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
                 '                          base::Unretained(this)));\n'
                 '}\n'
                 'void SteadSidebarUI::HandleClose(const base::ListValue&) {}\n'
-                'void LegacyNavigation() {\n'
+                'void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {\n'
+                '  content::WebContents* sidebar_contents = web_ui()->GetWebContents();\n'
+                '  content::WebContents* tab_contents = sidebar_contents->GetOuterWebContents();\n'
+                '  Browser* browser =\n'
+                '      chrome::FindBrowserWithTab(tab_contents ? tab_contents : sidebar_contents);\n'
+                '  std::string url;\n'
+                '  url.append(net::EscapeQueryParamValue("session", true));\n'
                 '  chrome::NavigateParams params(nullptr, GURL(), ui::PAGE_TRANSITION_LINK);\n'
+                '  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;\n'
                 '  chrome::Navigate(&params);\n'
                 '}\n'
                 'void SteadSidebarUI::BindInterface(\n'
@@ -322,7 +329,8 @@ class GithubNormalizeChromiumSourcesTest(unittest.TestCase):
             self.assertEqual(cc_text.count('"openSteadFullChat"'), 1)
             self.assertEqual(cc_text.count("HandleOpenFullChat("), 1)
             self.assertIn("&SteadSidebarUI::HandleOpenFullChat", cc_text)
-            self.assertIn("chrome::FindBrowserWithTab", cc_text)
+            self.assertIn("chrome::FindBrowserWithProfile", cc_text)
+            self.assertNotIn("chrome::FindBrowserWithTab", cc_text)
             self.assertIn("WindowOpenDisposition::NEW_FOREGROUND_TAB", cc_text)
             self.assertIn("NavigateParams params(", cc_text)
             self.assertIn("Navigate(&params);", cc_text)

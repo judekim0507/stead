@@ -58,7 +58,7 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.c
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,96 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -137,10 +137,8 @@ new file mode 100644
 +}
 +
 +void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
-+  content::WebContents* sidebar_contents = web_ui()->GetWebContents();
-+  content::WebContents* tab_contents = sidebar_contents->GetOuterWebContents();
 +  Browser* browser =
-+      chrome::FindBrowserWithTab(tab_contents ? tab_contents : sidebar_contents);
++      chrome::FindBrowserWithProfile(Profile::FromWebUI(web_ui()));
 +  if (!browser) {
 +    return;
 +  }
