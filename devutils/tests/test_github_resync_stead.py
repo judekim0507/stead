@@ -32,6 +32,7 @@ class GithubResyncSteadTest(unittest.TestCase):
                 "chrome/browser/resources/stead_sidebar/BUILD.gn",
                 "chrome/browser/ui/stead/agent_control/BUILD.gn",
                 "chrome/browser/ui/stead/brain/BUILD.gn",
+                "chrome/browser/ui/stead/brain/stead_brain_service.cc",
             ]
             for rel in generated_builds:
                 text = (Path(tmpdirname) / rel).read_text(encoding="utf-8")
