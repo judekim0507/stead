@@ -124,6 +124,30 @@ class GithubResyncSteadTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            sidebar = source / "chrome/browser/ui/webui/side_panel/stead_sidebar"
+            sidebar.mkdir(parents=True)
+            sidebar_cc = sidebar / "stead_sidebar_ui.cc"
+            sidebar_cc.write_text(
+                '#include "base/functional/bind.h"\n'
+                '#include "chrome/browser/profiles/profile.h"\n'
+                "SteadSidebarUI::SteadSidebarUI(content::WebUI* web_ui) {\n"
+                "  web_ui->RegisterMessageCallback(\n"
+                '      "closeSteadSidebar",\n'
+                "      base::BindRepeating(&SteadSidebarUI::HandleClose,\n"
+                "                          base::Unretained(this)));\n"
+                "}\n"
+                "WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)\n",
+                encoding="utf-8",
+            )
+            sidebar_h = sidebar / "stead_sidebar_ui.h"
+            sidebar_h.write_text(
+                "#include <string_view>\n"
+                "class SteadSidebarUI {\n"
+                "  void HandleClose(const base::ListValue&);\n"
+                "};\n",
+                encoding="utf-8",
+            )
+
             subprocess.run([str(normalizer), str(source)], check=True)
 
             text = coordinator.read_text(encoding="utf-8")
@@ -141,6 +165,11 @@ class GithubResyncSteadTest(unittest.TestCase):
             agent_text = agent_control.read_text(encoding="utf-8")
             self.assertIn("opened->IgnoreInputEvents(std::nullopt)", agent_text)
             self.assertNotIn("opened->IgnoreInputEvents()", agent_text)
+            sidebar_text = sidebar_cc.read_text(encoding="utf-8")
+            self.assertIn('"openSteadAiSettings"', sidebar_text)
+            self.assertIn("HandleOpenAiSettings", sidebar_text)
+            self.assertIn('GURL("chrome://chat/ai-settings")', sidebar_text)
+            self.assertIn("HandleOpenAiSettings", sidebar_h.read_text(encoding="utf-8"))
 
     def test_normalize_upgrades_resumed_brain_to_multi_tab_context(self):
         repo_root = Path(__file__).resolve().parents[2]

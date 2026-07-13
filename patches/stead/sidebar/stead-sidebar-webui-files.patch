@@ -2,7 +2,7 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.h
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,52 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -49,6 +49,7 @@ new file mode 100644
 + private:
 +  void HandleClose(const base::ListValue&);
 +  void HandleOpenFullChat(const base::ListValue& args);
++  void HandleOpenAiSettings(const base::ListValue& args);
 +
 +  WEB_UI_CONTROLLER_TYPE_DECL();
 +};
@@ -58,7 +59,7 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.c
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,113 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -94,6 +95,10 @@ new file mode 100644
 +  web_ui->RegisterMessageCallback(
 +      "openSteadFullChat",
 +      base::BindRepeating(&SteadSidebarUI::HandleOpenFullChat,
++                          base::Unretained(this)));
++  web_ui->RegisterMessageCallback(
++      "openSteadAiSettings",
++      base::BindRepeating(&SteadSidebarUI::HandleOpenAiSettings,
 +                          base::Unretained(this)));
 +
 +  Profile* profile = Profile::FromWebUI(web_ui);
@@ -150,6 +155,19 @@ new file mode 100644
 +  }
 +
 +  NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
++  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
++  Navigate(&params);
++}
++
++void SteadSidebarUI::HandleOpenAiSettings(const base::ListValue&) {
++  Browser* browser =
++      chrome::FindBrowserWithProfile(Profile::FromWebUI(web_ui()));
++  if (!browser) {
++    return;
++  }
++
++  NavigateParams params(browser, GURL("chrome://chat/ai-settings"),
++                        ui::PAGE_TRANSITION_LINK);
 +  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
 +  Navigate(&params);
 +}

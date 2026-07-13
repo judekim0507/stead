@@ -7562,7 +7562,7 @@ index 525a910..34ee0fe 100644
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
  #include "chrome/browser/ui/browser.h"
  #include "chrome/browser/ui/browser_finder.h"
-@@ -95,4 +97,10 @@ void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
+@@ -110,4 +112,10 @@ void SteadSidebarUI::HandleOpenAiSettings(const base::ListValue&) {
    Navigate(&params);
  }
  

@@ -238,6 +238,23 @@ if '"openSteadFullChat"' not in cc:
         raise SystemExit("error: Stead sidebar close callback anchor is missing")
     cc = cc.replace(close_callback, close_callback + open_callback, 1)
 
+if '"openSteadAiSettings"' not in cc:
+    full_callback = '''\
+  web_ui->RegisterMessageCallback(
+      "openSteadFullChat",
+      base::BindRepeating(&SteadSidebarUI::HandleOpenFullChat,
+                          base::Unretained(this)));
+'''
+    settings_callback = '''\
+  web_ui->RegisterMessageCallback(
+      "openSteadAiSettings",
+      base::BindRepeating(&SteadSidebarUI::HandleOpenAiSettings,
+                          base::Unretained(this)));
+'''
+    if full_callback not in cc:
+        raise SystemExit("error: Stead full-chat callback anchor is missing")
+    cc = cc.replace(full_callback, full_callback + settings_callback, 1)
+
 if 'void SteadSidebarUI::HandleOpenFullChat' not in cc:
     handler = '''\
 void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
@@ -267,6 +284,30 @@ void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
         raise SystemExit("error: Stead sidebar handler insertion anchor is missing")
     cc = cc[:at] + handler + cc[at:]
 
+if 'void SteadSidebarUI::HandleOpenAiSettings' not in cc:
+    handler = '''\
+void SteadSidebarUI::HandleOpenAiSettings(const base::ListValue&) {
+  Browser* browser =
+      chrome::FindBrowserWithProfile(Profile::FromWebUI(web_ui()));
+  if (!browser) {
+    return;
+  }
+
+  NavigateParams params(browser, GURL("chrome://chat/ai-settings"),
+                        ui::PAGE_TRANSITION_LINK);
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  Navigate(&params);
+}
+
+'''
+    bind_anchor = 'void SteadSidebarUI::BindInterface('
+    at = cc.find(bind_anchor)
+    if at == -1:
+        at = cc.find('WEB_UI_CONTROLLER_TYPE_IMPL(SteadSidebarUI)')
+    if at == -1:
+        raise SystemExit("error: Stead settings handler insertion anchor is missing")
+    cc = cc[:at] + handler + cc[at:]
+
 if '#include <string>\n' not in h:
     anchor = '#include <string_view>\n'
     if anchor not in h:
@@ -281,13 +322,22 @@ if 'void HandleOpenFullChat(const base::ListValue& args);' not in h:
         anchor + '  void HandleOpenFullChat(const base::ListValue& args);\n',
         1,
     )
+if 'void HandleOpenAiSettings(const base::ListValue& args);' not in h:
+    anchor = '  void HandleOpenFullChat(const base::ListValue& args);\n'
+    if anchor not in h:
+        raise SystemExit("error: Stead full-chat declaration anchor is missing")
+    h = h.replace(
+        anchor,
+        anchor + '  void HandleOpenAiSettings(const base::ListValue& args);\n',
+        1,
+    )
 
 if cc != original_cc:
     cc_path.write_text(cc)
 if h != original_h:
     h_path.write_text(h)
 if cc != original_cc or h != original_h:
-    print("normalized resumed Stead full-chat navigation")
+    print("normalized resumed Stead sidebar navigation")
 PY
 fi
 
