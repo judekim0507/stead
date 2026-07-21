@@ -35,7 +35,7 @@ new file mode 100644
 index 0000000000000..e672d246e9a2
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/BUILD.gn
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,38 @@
 +# Copyright 2026 The Stead Authors
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
@@ -66,6 +66,7 @@ index 0000000000000..e672d246e9a2
 +    "//chrome/browser/ui/stead/agent_control",
 +    "//chrome/browser/ui/stead/agent_control:mojo_bindings",
 +    "//components/keyed_service/core",
++    "//components/prefs",
 +    "//content/public/browser",
 +    "//mojo/public/cpp/base",
 +    "//mojo/public/cpp/bindings",
@@ -78,7 +79,7 @@ new file mode 100644
 index 0000000000000..b0bf93ec80ec
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/brain_console.mojom
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,79 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -137,8 +138,11 @@ index 0000000000000..b0bf93ec80ec
 +      => (BrainResult result);
 +  ListSessions() => (BrainResult result);
 +  LoadSession(string session_id) => (BrainResult result);
++  GetPermissionMode() => (BrainPermissionMode permission_mode);
++  SetPermissionMode(BrainPermissionMode permission_mode) => ();
 +  SendMessage(string session_id, string text, array<BrainTabContext> tab_contexts,
-+      BrainModelSelection? model, BrainPermissionMode permission_mode)
++      BrainModelSelection? model, string reasoning_effort,
++      BrainPermissionMode permission_mode)
 +      => (BrainResult result);
 +  CancelTurn(string session_id) => (BrainResult result);
 +
@@ -281,7 +285,7 @@ new file mode 100644
 index 0000000000000..962a5a6a98f8
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.h
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,144 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -335,10 +339,14 @@ index 0000000000000..962a5a6a98f8
 +  void ListSessions(ListSessionsCallback callback) override;
 +  void LoadSession(const std::string& session_id,
 +                   LoadSessionCallback callback) override;
++  void GetPermissionMode(GetPermissionModeCallback callback) override;
++  void SetPermissionMode(mojom::BrainPermissionMode permission_mode,
++                         SetPermissionModeCallback callback) override;
 +  void SendMessage(const std::string& session_id,
 +                   const std::string& text,
 +                   std::vector<mojom::BrainTabContextPtr> tab_contexts,
 +                   mojom::BrainModelSelectionPtr model,
++                   const std::string& reasoning_effort,
 +                   mojom::BrainPermissionMode permission_mode,
 +                   SendMessageCallback callback) override;
 +  void CancelTurn(const std::string& session_id,
@@ -427,7 +435,7 @@ new file mode 100644
 index 0000000000000..71246ae8e56d
 --- /dev/null
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
-@@ -0,0 +1,1378 @@
+@@ -0,0 +1,1438 @@
 +// Copyright 2026 The Stead Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -461,6 +469,7 @@ index 0000000000000..71246ae8e56d
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
 +#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
++#include "components/prefs/pref_service.h"
 +#include "ui/gfx/geometry/point.h"
 +#include "ui/gfx/geometry/rect.h"
 +#include "url/gurl.h"
@@ -472,6 +481,7 @@ index 0000000000000..71246ae8e56d
 +constexpr int kProtocolVersion = 1;
 +constexpr size_t kMaxBrainLineBytes = 4 * 1024 * 1024;
 +constexpr size_t kMaxBrainImageBytes = 2 * 1024 * 1024;
++constexpr char kLastPermissionModePref[] = "stead.last_permission_mode";
 +
 +std::string OptionalString(const base::DictValue& dict, std::string_view key) {
 +  const std::string* value = dict.FindString(key);
@@ -758,6 +768,17 @@ index 0000000000000..71246ae8e56d
 +  return "read";
 +}
 +
++mojom::BrainPermissionMode PermissionModeFromProtocolString(
++    std::string_view permission_mode) {
++  if (permission_mode == "read") {
++    return mojom::BrainPermissionMode::kRead;
++  }
++  if (permission_mode == "full") {
++    return mojom::BrainPermissionMode::kFull;
++  }
++  return mojom::BrainPermissionMode::kAsk;
++}
++
 +mojom::CredentialUsePolicy CredentialUsePolicyForPermissionMode(
 +    mojom::BrainPermissionMode permission_mode) {
 +  return permission_mode == mojom::BrainPermissionMode::kAsk
@@ -834,10 +855,24 @@ index 0000000000000..71246ae8e56d
 +  std::move(callback).Run(SendRequest(std::move(request)));
 +}
 +
++void SteadBrainService::GetPermissionMode(GetPermissionModeCallback callback) {
++  std::move(callback).Run(PermissionModeFromProtocolString(
++      profile_->GetPrefs()->GetString(kLastPermissionModePref)));
++}
++
++void SteadBrainService::SetPermissionMode(
++    mojom::BrainPermissionMode permission_mode,
++    SetPermissionModeCallback callback) {
++  profile_->GetPrefs()->SetString(kLastPermissionModePref,
++                                  PermissionModeToProtocolString(permission_mode));
++  std::move(callback).Run();
++}
++
 +void SteadBrainService::SendMessage(const std::string& session_id,
 +                                    const std::string& text,
 +                                    std::vector<mojom::BrainTabContextPtr> tab_contexts,
 +                                    mojom::BrainModelSelectionPtr model,
++                                    const std::string& reasoning_effort,
 +                                    mojom::BrainPermissionMode permission_mode,
 +                                    SendMessageCallback callback) {
 +  const std::string request_id = NextRequestId();
@@ -846,6 +881,9 @@ index 0000000000000..71246ae8e56d
 +  request.Set("text", text);
 +  request.Set("permission_mode",
 +              PermissionModeToProtocolString(permission_mode));
++  request.Set("reasoning_effort", reasoning_effort);
++  profile_->GetPrefs()->SetString(kLastPermissionModePref,
++                                  PermissionModeToProtocolString(permission_mode));
 +  session_permission_modes_[session_id] = permission_mode;
 +  if (!tab_contexts.empty()) {
 +    base::ListValue tabs;
@@ -864,7 +902,37 @@ index 0000000000000..71246ae8e56d
 +    selection.Set("model", model->model);
 +    request.Set("model", std::move(selection));
 +  }
-+  std::move(callback).Run(SendRequest(std::move(request)));
++  mojom::BrainResultPtr result = SendRequest(std::move(request));
++  if (result->ok) {
++    // Local lifecycle event: every WebUI surface attached to this profile can
++    // create the same live turn immediately, without polling session storage.
++    base::DictValue event;
++    event.Set("type", "turn_started");
++    event.Set("request_id", request_id);
++    event.Set("session_id", session_id);
++    event.Set("text", text);
++    event.Set("permission_mode", PermissionModeToProtocolString(permission_mode));
++    event.Set("reasoning_effort", reasoning_effort);
++    if (!tab_contexts.empty()) {
++      base::ListValue tabs;
++      for (const auto& tab_context : tab_contexts) {
++        base::DictValue tab;
++        tab.Set("tab_id", tab_context->tab_id);
++        tab.Set("url", tab_context->url);
++        tab.Set("title", tab_context->title);
++        tabs.Append(std::move(tab));
++      }
++      event.Set("tab_contexts", std::move(tabs));
++    }
++    if (model) {
++      base::DictValue selection;
++      selection.Set("provider", model->provider);
++      selection.Set("model", model->model);
++      event.Set("model", std::move(selection));
++    }
++    EmitEvent(event);
++  }
++  std::move(callback).Run(std::move(result));
 +}
 +
 +void SteadBrainService::CancelTurn(const std::string& session_id,
@@ -1839,6 +1907,17 @@ index c3bde7b..38db828 100644
 +  void BindInterface(
 +      mojo::PendingReceiver<stead::mojom::BrainConsole> receiver);
  
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -1735,5 +1735,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
+                           const std::string& locale) {
+   TRACE_EVENT0("browser", "chrome::RegisterProfilePrefs");
++  // Shared by Stead's sidebar and full-screen chat WebUI origins.
++  registry->RegisterStringPref("stead.last_permission_mode", "ask");
+   // User prefs. Please keep this list alphabetized.
+   AccessibilityLabelsService::RegisterProfilePrefs(registry);
+   AccessibilityUIMessageHandler::RegisterProfilePrefs(registry);
 diff --git a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc b/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
 index ddebcd9..956b618 100644
 --- a/chrome/browser/ui/webui/stead_chat/stead_chat_ui.cc
