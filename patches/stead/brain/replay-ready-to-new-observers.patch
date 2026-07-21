@@ -2,7 +2,7 @@ diff --git a/chrome/browser/ui/stead/brain/stead_brain_service.cc b/chrome/brows
 index b3f6647..a3db4d9 100644
 --- a/chrome/browser/ui/stead/brain/stead_brain_service.cc
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
-@@ -358,8 +358,11 @@ void SteadBrainService::Shutdown() {
+@@ -358,8 +358,14 @@ void SteadBrainService::Shutdown() {
  
  void SteadBrainService::AddObserver(
      mojo::PendingRemote<mojom::BrainObserver> observer) {
@@ -12,31 +12,43 @@ index b3f6647..a3db4d9 100644
 +  if (last_ready_event_) {
 +    observers_.Get(id)->OnBrainEvent(last_ready_event_.Clone());
 +  }
++  for (const auto& entry : active_turn_events_) {
++    observers_.Get(id)->OnBrainEvent(entry.second.Clone());
++  }
  }
  
  void SteadBrainService::Initialize(InitializeCallback callback) {
-@@ -630,6 +633,7 @@ bool SteadBrainService::LaunchHelper(std::string* error_message) {
+@@ -630,6 +637,8 @@ bool SteadBrainService::LaunchHelper(std::string* error_message) {
  
  void SteadBrainService::StopHelper() {
    initialized_ = false;
 +  last_ready_event_.reset();
++  active_turn_events_.clear();
    pending_user_prompts_.clear();
    stdin_write_.reset();
    if (process_.IsValid()) {
-@@ -740,6 +744,7 @@ void SteadBrainService::OnBrainPipeClosed() {
+@@ -740,6 +748,8 @@ void SteadBrainService::OnBrainPipeClosed() {
    process_.Close();
    stdin_write_.reset();
    initialized_ = false;
 +  last_ready_event_.reset();
++  active_turn_events_.clear();
    base::DictValue event;
    event.Set("type", "error");
    event.Set("code", "brain_exited");
-@@ -753,6 +758,9 @@ void SteadBrainService::EmitEvent(const base::DictValue& event) {
+@@ -753,6 +762,16 @@ void SteadBrainService::EmitEvent(const base::DictValue& event) {
    out->request_id = OptionalString(event, "request_id");
    out->session_id = OptionalString(event, "session_id");
    out->payload_json = base::WriteJson(event).value_or("{}");
 +  if (out->type == "ready") {
 +    last_ready_event_ = out.Clone();
++  }
++  if (!out->session_id.empty()) {
++    if (out->type == "turn_started") {
++      active_turn_events_.insert_or_assign(out->session_id, out.Clone());
++    } else if (out->type == "assistant_done" || out->type == "error") {
++      active_turn_events_.erase(out->session_id);
++    }
 +  }
    for (auto& observer : observers_) {
      observer->OnBrainEvent(out.Clone());
@@ -45,7 +57,7 @@ diff --git a/chrome/browser/ui/stead/brain/stead_brain_service.h b/chrome/browse
 index 0a8514e..a949996 100644
 --- a/chrome/browser/ui/stead/brain/stead_brain_service.h
 +++ b/chrome/browser/ui/stead/brain/stead_brain_service.h
-@@ -125,6 +125,10 @@ class SteadBrainService : public KeyedService, public mojom::BrainConsole {
+@@ -125,6 +125,13 @@ class SteadBrainService : public KeyedService, public mojom::BrainConsole {
    base::Process process_;
    base::ScopedFD stdin_write_;
    bool initialized_ = false;
@@ -53,6 +65,9 @@ index 0a8514e..a949996 100644
 +  // initialization so late-opened surfaces still learn the skill catalog and
 +  // brain metadata.
 +  mojom::BrainEventPtr last_ready_event_;
++  // Active turn starts are replayed to newly bound WebUI surfaces. This keeps
++  // an agent tab sidebar in lockstep even when it is created after SendMessage.
++  base::flat_map<std::string, mojom::BrainEventPtr> active_turn_events_;
    int64_t next_request_id_ = 1;
    std::set<std::string> pending_user_prompts_;
    base::flat_map<std::string, mojom::BrainPermissionMode>
