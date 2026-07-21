@@ -1,0 +1,971 @@
+Index: src/chrome/browser/ui/stead/agent_control/agent_control.mojom
+===================================================================
+--- src.orig/chrome/browser/ui/stead/agent_control/agent_control.mojom
++++ src/chrome/browser/ui/stead/agent_control/agent_control.mojom
+@@ -93,6 +93,9 @@ struct Snapshot {
+   uint32 node_count;
+   bool truncated;
+   uint64 capture_time_us;
++  // Native input uses viewport DIPs. Expose the exact coordinate space so a
++  // scaled screenshot is never mistaken for the input coordinate space.
++  gfx.mojom.Size viewport_size;
+   AxNode root;
+ };
+ 
+@@ -153,6 +156,10 @@ struct ReadResult {
+   string code;
+   string message;
+   string blocked_by;
++  // Populated for screenshots. The PNG and native input can use different
++  // dimensions when the renderer surface is downscaled for model input.
++  gfx.mojom.Size viewport_size;
++  gfx.mojom.Size image_size;
+ };
+ 
+ enum ControlEventType {
+@@ -271,6 +278,7 @@ enum CredentialUsePolicy {
+ struct AuditEntry {
+   int32 action_id;
+   uint64 sequence;
++  string session_id;
+   int32 tab_id;
+   ActionClass action_class;
+   string operation;
+@@ -281,6 +289,7 @@ struct AuditEntry {
+ 
+ struct ConfirmationRequest {
+   int32 action_id;
++  string session_id;
+   int32 tab_id;
+   ActionClass action_class;
+   string operation;
+@@ -339,7 +348,11 @@ interface AgentControl {
+   MouseDrag(int32 tab_id, gfx.mojom.Point from, gfx.mojom.Point to,
+       int32 button, int32 steps) => (ActionResult result);
+   Key(int32 tab_id, string key, int32 modifiers) => (ActionResult result);
+-  Scroll(int32 tab_id, int32 dx, int32 dy) => (ActionResult result);
++  // Scroll at a rendered viewport coordinate. A null point falls back to the
++  // viewport center for compatibility. Positive dx/dy move the viewport
++  // right/down, matching computer-use action conventions.
++  Scroll(int32 tab_id, gfx.mojom.Point? point, int32 dx, int32 dy)
++      => (ActionResult result);
+   ListCredentials(int32 tab_id, url.mojom.Origin origin,
+       CredentialUsePolicy policy)
+       => (ReadResult result, array<CredentialRef> credentials);
+Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+===================================================================
+--- src.orig/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
++++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+@@ -272,6 +272,7 @@ struct NodeSemanticData {
+   bool clickable = false;
+   bool editable = false;
+   bool disabled = false;
++  bool has_checked = false;
+   bool password = false;
+   bool has_bounds = false;
+   gfx::Rect bounds;
+@@ -699,7 +700,12 @@ mojom::ReadResultPtr MakeReadResult(bool
+                                     const std::string& message,
+                                     const std::string& blocked_by =
+                                         std::string()) {
+-  return mojom::ReadResult::New(ok, code, message, blocked_by);
++  auto result = mojom::ReadResult::New();
++  result->ok = ok;
++  result->code = code;
++  result->message = message;
++  result->blocked_by = blocked_by;
++  return result;
+ }
+ 
+ std::string DownloadStateToString(download::DownloadItem::DownloadState state) {
+@@ -1056,7 +1062,9 @@ mojom::NodeProbePtr BuildNodeProbeFromVa
+   return probe;
+ }
+ 
+-std::u16string BuildProbeScript(const NodeSemanticData& data) {
++std::u16string BuildProbeScript(const NodeSemanticData& data,
++                                bool scroll_into_view = false,
++                                bool activate = false) {
+   const gfx::Rect& bounds = data.bounds;
+   const int center_x = data.has_bounds ? bounds.x() + bounds.width() / 2 : -1;
+   const int center_y = data.has_bounds ? bounds.y() + bounds.height() / 2 : -1;
+@@ -1064,6 +1072,8 @@ std::u16string BuildProbeScript(const No
+   const std::string id = base::GetQuotedJSONString(data.html_id);
+   const std::string name = base::GetQuotedJSONString(data.html_input_name);
+   const std::string class_name = base::GetQuotedJSONString(data.class_name);
++  const char* should_scroll = scroll_into_view ? "true" : "false";
++  const char* should_activate = activate ? "true" : "false";
+ 
+   return base::UTF8ToUTF16(base::StringPrintf(
+       R"JS(
+@@ -1123,13 +1133,43 @@ std::u16string BuildProbeScript(const No
+   if (hintedClass) {
+     pushAll(hinted, document.getElementsByClassName(hintedClass));
+   }
+-  const stack = x >= 0 && y >= 0
++  const initialStack = x >= 0 && y >= 0
+       ? Array.from(document.elementsFromPoint(x, y)).slice(0, 8)
+       : [];
+-  const targetIndex = stack.findIndex(matchesHints);
+-  let el = targetIndex >= 0 ? stack[targetIndex] : null;
+-  if (!el) el = hinted.find(matchesHints) || stack[0] || null;
+-  const stackIndex = el ? stack.indexOf(el) : -1;
++  const targetIndex = initialStack.findIndex(matchesHints);
++  let el = targetIndex >= 0 ? initialStack[targetIndex] : null;
++  if (!el) el = hinted.find(matchesHints) || initialStack[0] || null;
++  let activationEl = el;
++  if (el && el.matches && el.matches('input[type="radio"], input[type="checkbox"]')) {
++    let label = null;
++    if (el.id) {
++      try {
++        label = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
++      } catch (_) {}
++    }
++    if (!label && el.closest) label = el.closest('label');
++    if (!label && el.parentElement && el.parentElement.closest) {
++      label = el.parentElement.closest('label');
++    }
++    if (label) activationEl = label;
++  }
++  if (%s && activationEl && activationEl.scrollIntoView) {
++    activationEl.scrollIntoView({block: 'center', inline: 'nearest'});
++  }
++  if (%s && activationEl && activationEl.click) activationEl.click();
++  const activationRect = activationEl && activationEl.getBoundingClientRect
++      ? activationEl.getBoundingClientRect()
++      : null;
++  const activationX = activationRect
++      ? Math.round(activationRect.left + activationRect.width / 2)
++      : x;
++  const activationY = activationRect
++      ? Math.round(activationRect.top + activationRect.height / 2)
++      : y;
++  const stack = activationX >= 0 && activationY >= 0
++      ? Array.from(document.elementsFromPoint(activationX, activationY)).slice(0, 8)
++      : initialStack;
++  const stackIndex = activationEl ? stack.indexOf(activationEl) : -1;
+   const out = {
+     found: !!el,
+     target_matched: !!el && matchesHints(el),
+@@ -1141,7 +1181,7 @@ std::u16string BuildProbeScript(const No
+   };
+   if (!el) return out;
+   const style = getComputedStyle(el);
+-  const rect = el.getBoundingClientRect();
++  const rect = activationRect || el.getBoundingClientRect();
+   out.visible = rect.width > 0 && rect.height > 0 &&
+       style.display !== 'none' && style.visibility !== 'hidden' &&
+       Number(style.opacity || 1) > 0;
+@@ -1168,7 +1208,7 @@ std::u16string BuildProbeScript(const No
+ })()
+ )JS",
+       center_x, center_y, tag.c_str(), id.c_str(), name.c_str(),
+-      class_name.c_str()));
++      class_name.c_str(), should_scroll, should_activate));
+ }
+ 
+ std::optional<blink::WebMouseEvent::Button> MouseButtonFromInt(int32_t button) {
+@@ -1265,11 +1305,6 @@ std::string MouseMoveApprovalScope(int32
+          std::to_string(point.x()) + "," + std::to_string(point.y());
+ }
+ 
+-std::string ScrollApprovalScope(int32_t tab_id, int32_t dx, int32_t dy) {
+-  return "Scroll|" + std::to_string(tab_id) + "|" + std::to_string(dx) +
+-         "," + std::to_string(dy);
+-}
+-
+ KeyInfo MakeKeyInfo(ui::DomKey dom_key,
+                     ui::DomCode dom_code,
+                     ui::KeyboardCode key_code,
+@@ -1510,6 +1545,7 @@ class SteadAgentControlService::PrivateB
+       const std::vector<base::FilePath>& paths);
+   mojom::ActionResultPtr Scroll(int32_t tab_id,
+                                 int32_t action_id,
++                                const std::optional<gfx::Point>& point,
+                                 int32_t dx,
+                                 int32_t dy);
+   mojom::ActionResultPtr MouseMove(int32_t tab_id,
+@@ -1553,6 +1589,8 @@ class SteadAgentControlService::PrivateB
+     return FindTabById(tab_id);
+   }
+   void EnsureAgentOwnedTabLocked(int32_t tab_id);
++  bool SuspendAgentInputBlock(int32_t tab_id);
++  void RestoreAgentInputBlock(int32_t tab_id, bool suspended);
+   void ReleaseAgentOwnedTab(int32_t tab_id);
+   bool IsAgentOwnedTab(int32_t tab_id) const;
+   std::string AgentOwnerSession(int32_t tab_id) const;
+@@ -1624,12 +1662,39 @@ class SteadAgentControlService::PrivateB
+           CurrentSnapshotGeneration(ref.frame->tab_id));
+     }
+ 
+-    ui::AXActionData action_data;
+-    action_data.action = action;
+-    action_data.target_tree_id = frame->GetAXTreeID();
+-    action_data.target_node_id = ref.ax_node_id;
+-    action_data.value = value;
+-    frame->AccessibilityPerformAction(action_data);
++    const NodeSemanticData* node_data = SnapshotNodeDataForRef(ref);
++    const bool use_dom_activation =
++        action == ax::mojom::Action::kDoDefault && node_data &&
++        HasDomProbeHints(*node_data);
++    if (use_dom_activation) {
++      // Chromium AX default actions can report success without activating
++      // custom controls and links. Activate the already-resolved element in
++      // the isolated world after the outer broker has classified and gated
++      // it. This is the same resolved target used for audit/verification; it
++      // does not expose a general page-script execution path.
++      frame->ExecuteJavaScriptInIsolatedWorld(
++          BuildProbeScript(*node_data, /*scroll_into_view=*/true,
++                           /*activate=*/true),
++          base::NullCallback(), kSteadProbeWorldId);
++    } else {
++      ui::AXActionData action_data;
++      action_data.action = action;
++      action_data.target_tree_id = frame->GetAXTreeID();
++      action_data.target_node_id = ref.ax_node_id;
++      action_data.value = value;
++      frame->AccessibilityPerformAction(action_data);
++    }
++    if (action == ax::mojom::Action::kScrollToMakeVisible) {
++      if (node_data && HasDomProbeHints(*node_data)) {
++        // AX kScrollToMakeVisible is a no-op for some custom controls. Dispatch
++        // a deterministic, write-only DOM scroll in Stead's isolated world so
++        // locator actions do not guess which nested scroller owns a wheel
++        // event. No page data is returned through this path.
++        frame->ExecuteJavaScriptInIsolatedWorld(
++            BuildProbeScript(*node_data, /*scroll_into_view=*/true),
++            base::NullCallback(), kSteadProbeWorldId);
++      }
++    }
+ 
+     return broker_->MakeResult(
+         action_id, true, kAccessibilityActionAccepted,
+@@ -1674,6 +1737,7 @@ class SteadAgentControlService::PrivateB
+       int32_t action_id,
+       uint64_t cancel_epoch,
+       const std::string& frame_token,
++      const gfx::Size& viewport_size,
+       SteadAgentControlService::ScreenshotCallback callback,
+       const content::CopyFromSurfaceResult& copy_result);
+   void CompleteEval(int32_t tab_id,
+@@ -1690,6 +1754,10 @@ class SteadAgentControlService::PrivateB
+                          base::Value value);
+   bool IsStaleFrame(const mojom::FrameRef& frame_ref,
+                     content::WebContents* web_contents) const;
++  std::optional<gfx::Point> NormalizeInputPoint(
++      int32_t tab_id,
++      const gfx::Point& point,
++      const gfx::Size& viewport_size) const;
+   bool SnapshotIndexContains(const mojom::NodeRef& ref) const;
+   const NodeSemanticData* SnapshotNodeDataForRef(
+       const mojom::NodeRef& ref) const;
+@@ -1707,6 +1775,12 @@ class SteadAgentControlService::PrivateB
+   base::flat_map<int32_t, uint32_t> snapshot_generations_;
+   base::flat_map<int32_t, std::unique_ptr<ObservedTab>> observed_tabs_;
+   base::flat_map<int32_t, std::unique_ptr<SnapshotIndex>> snapshot_indexes_;
++  struct ScreenshotCoordinateSpace {
++    gfx::Size viewport_size;
++    gfx::Size image_size;
++  };
++  base::flat_map<int32_t, ScreenshotCoordinateSpace>
++      screenshot_coordinate_spaces_;
+   base::flat_set<int32_t> agent_owned_tabs_;
+   base::flat_map<int32_t, std::string> agent_owner_sessions_;
+   base::flat_map<int32_t, content::WebContents::ScopedIgnoreInputEvents>
+@@ -2277,6 +2351,8 @@ void SteadAgentControlService::Shutdown(
+   credential_cache_.clear();
+   credential_cache_order_.clear();
+   cancel_epochs_by_tab_.clear();
++  next_action_session_id_.clear();
++  action_session_ids_.clear();
+   last_drive_action_by_tab_.clear();
+   if (download_observer_) {
+     download_observer_->Shutdown();
+@@ -2313,6 +2389,11 @@ std::string SteadAgentControlService::Ag
+                           : std::string();
+ }
+ 
++void SteadAgentControlService::SetNextActionSession(
++    const std::string& session_id) {
++  next_action_session_id_ = session_id;
++}
++
+ void SteadAgentControlService::Observe(
+     mojo::PendingRemote<mojom::ControlObserver> observer) {
+   observers_.Add(std::move(observer));
+@@ -2885,7 +2966,8 @@ void SteadAgentControlService::PrivateBr
+       base::BindPostTaskToCurrentDefault(base::BindOnce(
+           &PrivateBrowserControl::CompleteScreenshotCopy,
+           weak_factory_.GetWeakPtr(), tab_id, action_id,
+-          cancel_epoch, taint_frame_token, std::move(callback))));
++          cancel_epoch, taint_frame_token, view->GetVisibleViewportSize(),
++          std::move(callback))));
+ }
+ 
+ void SteadAgentControlService::PrivateBrowserControl::Eval(
+@@ -3211,6 +3293,7 @@ SteadAgentControlService::PrivateBrowser
+ mojom::ActionResultPtr SteadAgentControlService::PrivateBrowserControl::Scroll(
+     int32_t tab_id,
+     int32_t action_id,
++    const std::optional<gfx::Point>& point,
+     int32_t dx,
+     int32_t dy) {
+   content::WebContents* web_contents = FindTabById(tab_id);
+@@ -3246,15 +3329,26 @@ mojom::ActionResultPtr SteadAgentControl
+   }
+   const gfx::Point center(
+       viewport_size.width() / 2, viewport_size.height() / 2);
++  // A point only chooses the scroll container. If the model supplied stale or
++  // scaled screenshot coordinates and no exact mapping is available, fall
++  // back to the viewport center instead of failing the entire scroll action.
++  const gfx::Point target = point
++                                ? NormalizeInputPoint(tab_id, *point,
++                                                      viewport_size)
++                                      .value_or(center)
++                                : center;
+   const gfx::Rect view_bounds = view->GetViewBounds();
+ 
+   blink::WebMouseWheelEvent wheel_event(
+       blink::WebInputEvent::Type::kMouseWheel,
+       blink::WebInputEvent::kNoModifiers, base::TimeTicks::Now());
+-  wheel_event.SetPositionInWidget(center.x(), center.y());
+-  wheel_event.SetPositionInScreen(view_bounds.x() + center.x(),
+-                                  view_bounds.y() + center.y());
+-  wheel_event.delta_units = ui::ScrollGranularity::kScrollByPixel;
++  wheel_event.SetPositionInWidget(target.x(), target.y());
++  wheel_event.SetPositionInScreen(view_bounds.x() + target.x(),
++                                  view_bounds.y() + target.y());
++  wheel_event.delta_units = ui::ScrollGranularity::kScrollByPrecisePixel;
++  // The Steadwright API follows Playwright/CDP semantics (positive deltaY
++  // scrolls down), while WebMouseWheelEvent uses platform wheel deltas where
++  // scrolling down is negative. Translate at this native boundary.
+   wheel_event.delta_x = -static_cast<float>(dx);
+   wheel_event.delta_y = -static_cast<float>(dy);
+   wheel_event.wheel_ticks_x =
+@@ -3262,6 +3356,7 @@ mojom::ActionResultPtr SteadAgentControl
+   wheel_event.wheel_ticks_y =
+       wheel_event.delta_y / ui::MouseWheelEvent::kWheelDelta;
+   wheel_event.phase = blink::WebMouseWheelEvent::kPhaseBegan;
++  const bool restore_input_block = SuspendAgentInputBlock(tab_id);
+   render_widget_host->ForwardWheelEvent(wheel_event);
+   wheel_event.delta_x = 0;
+   wheel_event.delta_y = 0;
+@@ -3271,6 +3366,7 @@ mojom::ActionResultPtr SteadAgentControl
+   wheel_event.dispatch_type =
+       blink::WebInputEvent::DispatchType::kEventNonBlocking;
+   render_widget_host->ForwardWheelEvent(wheel_event);
++  RestoreAgentInputBlock(tab_id, restore_input_block);
+ 
+   return broker_->MakeResult(
+       action_id, true, kRawWheelEventAccepted,
+@@ -3305,23 +3401,30 @@ SteadAgentControlService::PrivateBrowser
+         /*blocked_by=*/"surface", CurrentSnapshotGeneration(tab_id));
+   }
+ 
+-  if (!PointInViewport(point, view->GetVisibleViewportSize())) {
++  const gfx::Size viewport_size = view->GetVisibleViewportSize();
++  std::optional<gfx::Point> normalized =
++      NormalizeInputPoint(tab_id, point, viewport_size);
++  if (!normalized) {
+     return broker_->MakeResult(
+         action_id, false, kInvalidPoint,
+-        "Mouse point is outside the visible viewport.",
++        base::StringPrintf(
++            "Mouse point is outside the %dx%d visible viewport.",
++            viewport_size.width(), viewport_size.height()),
+         /*stale=*/false, /*needs_snapshot=*/false,
+         /*needs_confirmation=*/false, /*target_missing=*/false,
+         /*blocked_by=*/"viewport", CurrentSnapshotGeneration(tab_id));
+   }
+ 
++  const bool restore_input_block = SuspendAgentInputBlock(tab_id);
+   view->Focus();
+   content::RenderWidgetHost* render_widget_host = view->GetRenderWidgetHost();
+   const gfx::Rect view_bounds = view->GetViewBounds();
+   blink::WebMouseEvent mouse_move = BuildMouseEvent(
+-      blink::WebInputEvent::Type::kMouseMove, point, view_bounds,
++      blink::WebInputEvent::Type::kMouseMove, *normalized, view_bounds,
+       blink::WebMouseEvent::Button::kNoButton, /*click_count=*/0,
+       blink::WebInputEvent::kNoModifiers);
+   render_widget_host->ForwardMouseEvent(mouse_move);
++  RestoreAgentInputBlock(tab_id, restore_input_block);
+ 
+   return broker_->MakeResult(
+       action_id, true, kRawMouseMoveAccepted,
+@@ -3358,22 +3461,29 @@ SteadAgentControlService::PrivateBrowser
+         /*blocked_by=*/"surface", CurrentSnapshotGeneration(tab_id));
+   }
+ 
+-  if (!PointInViewport(point, view->GetVisibleViewportSize())) {
++  const gfx::Size viewport_size = view->GetVisibleViewportSize();
++  std::optional<gfx::Point> normalized =
++      NormalizeInputPoint(tab_id, point, viewport_size);
++  if (!normalized) {
+     return broker_->MakeResult(
+         action_id, false, kInvalidPoint,
+-        "Mouse point is outside the visible viewport.",
++        base::StringPrintf(
++            "Mouse point is outside the %dx%d visible viewport.",
++            viewport_size.width(), viewport_size.height()),
+         /*stale=*/false, /*needs_snapshot=*/false,
+         /*needs_confirmation=*/false, /*target_missing=*/false,
+         /*blocked_by=*/"viewport", CurrentSnapshotGeneration(tab_id));
+   }
+ 
++  const bool restore_input_block = SuspendAgentInputBlock(tab_id);
+   view->Focus();
+   content::RenderWidgetHost* render_widget_host = view->GetRenderWidgetHost();
+   const gfx::Rect view_bounds = view->GetViewBounds();
+   blink::WebMouseEvent mouse_down = BuildMouseEvent(
+-      blink::WebInputEvent::Type::kMouseDown, point, view_bounds, button,
++      blink::WebInputEvent::Type::kMouseDown, *normalized, view_bounds, button,
+       click_count, MouseButtonDownModifier(button));
+   render_widget_host->ForwardMouseEvent(mouse_down);
++  RestoreAgentInputBlock(tab_id, restore_input_block);
+ 
+   return broker_->MakeResult(
+       action_id, true, kRawMouseEventAccepted,
+@@ -3410,22 +3520,29 @@ SteadAgentControlService::PrivateBrowser
+         /*blocked_by=*/"surface", CurrentSnapshotGeneration(tab_id));
+   }
+ 
+-  if (!PointInViewport(point, view->GetVisibleViewportSize())) {
++  const gfx::Size viewport_size = view->GetVisibleViewportSize();
++  std::optional<gfx::Point> normalized =
++      NormalizeInputPoint(tab_id, point, viewport_size);
++  if (!normalized) {
+     return broker_->MakeResult(
+         action_id, false, kInvalidPoint,
+-        "Mouse point is outside the visible viewport.",
++        base::StringPrintf(
++            "Mouse point is outside the %dx%d visible viewport.",
++            viewport_size.width(), viewport_size.height()),
+         /*stale=*/false, /*needs_snapshot=*/false,
+         /*needs_confirmation=*/false, /*target_missing=*/false,
+         /*blocked_by=*/"viewport", CurrentSnapshotGeneration(tab_id));
+   }
+ 
++  const bool restore_input_block = SuspendAgentInputBlock(tab_id);
+   view->Focus();
+   content::RenderWidgetHost* render_widget_host = view->GetRenderWidgetHost();
+   const gfx::Rect view_bounds = view->GetViewBounds();
+   blink::WebMouseEvent mouse_up = BuildMouseEvent(
+-      blink::WebInputEvent::Type::kMouseUp, point, view_bounds, button,
++      blink::WebInputEvent::Type::kMouseUp, *normalized, view_bounds, button,
+       click_count, MouseButtonDownModifier(button));
+   render_widget_host->ForwardMouseEvent(mouse_up);
++  RestoreAgentInputBlock(tab_id, restore_input_block);
+ 
+   return broker_->MakeResult(
+       action_id, true, kRawMouseEventAccepted,
+@@ -3462,27 +3579,34 @@ SteadAgentControlService::PrivateBrowser
+         /*blocked_by=*/"surface", CurrentSnapshotGeneration(tab_id));
+   }
+ 
+-  if (!PointInViewport(point, view->GetVisibleViewportSize())) {
++  const gfx::Size viewport_size = view->GetVisibleViewportSize();
++  std::optional<gfx::Point> normalized =
++      NormalizeInputPoint(tab_id, point, viewport_size);
++  if (!normalized) {
+     return broker_->MakeResult(
+         action_id, false, kInvalidPoint,
+-        "Mouse point is outside the visible viewport.",
++        base::StringPrintf(
++            "Mouse point is outside the %dx%d visible viewport.",
++            viewport_size.width(), viewport_size.height()),
+         /*stale=*/false, /*needs_snapshot=*/false,
+         /*needs_confirmation=*/false, /*target_missing=*/false,
+         /*blocked_by=*/"viewport", CurrentSnapshotGeneration(tab_id));
+   }
+ 
++  const bool restore_input_block = SuspendAgentInputBlock(tab_id);
+   view->Focus();
+   content::RenderWidgetHost* render_widget_host = view->GetRenderWidgetHost();
+   const gfx::Rect view_bounds = view->GetViewBounds();
+   blink::WebMouseEvent mouse_down = BuildMouseEvent(
+-      blink::WebInputEvent::Type::kMouseDown, point, view_bounds, button,
++      blink::WebInputEvent::Type::kMouseDown, *normalized, view_bounds, button,
+       click_count, MouseButtonDownModifier(button));
+   render_widget_host->ForwardMouseEvent(mouse_down);
+ 
+   blink::WebMouseEvent mouse_up = BuildMouseEvent(
+-      blink::WebInputEvent::Type::kMouseUp, point, view_bounds, button,
++      blink::WebInputEvent::Type::kMouseUp, *normalized, view_bounds, button,
+       click_count, MouseButtonDownModifier(button));
+   render_widget_host->ForwardMouseEvent(mouse_up);
++  RestoreAgentInputBlock(tab_id, restore_input_block);
+ 
+   return broker_->MakeResult(
+       action_id, true, kRawMouseEventAccepted,
+@@ -3521,8 +3645,11 @@ SteadAgentControlService::PrivateBrowser
+   }
+ 
+   const gfx::Size viewport_size = view->GetVisibleViewportSize();
+-  if (!PointInViewport(from, viewport_size) ||
+-      !PointInViewport(to, viewport_size)) {
++  std::optional<gfx::Point> normalized_from =
++      NormalizeInputPoint(tab_id, from, viewport_size);
++  std::optional<gfx::Point> normalized_to =
++      NormalizeInputPoint(tab_id, to, viewport_size);
++  if (!normalized_from || !normalized_to) {
+     return broker_->MakeResult(
+         action_id, false, kInvalidPoint,
+         "Drag endpoints must be inside the visible viewport.",
+@@ -3532,17 +3659,19 @@ SteadAgentControlService::PrivateBrowser
+   }
+ 
+   const int32_t step_count = steps == 0 ? kDefaultDragSteps : steps;
++  const bool restore_input_block = SuspendAgentInputBlock(tab_id);
+   view->Focus();
+   content::RenderWidgetHost* render_widget_host = view->GetRenderWidgetHost();
+   const gfx::Rect view_bounds = view->GetViewBounds();
+   blink::WebMouseEvent mouse_down = BuildMouseEvent(
+-      blink::WebInputEvent::Type::kMouseDown, from, view_bounds, button,
++      blink::WebInputEvent::Type::kMouseDown, *normalized_from, view_bounds, button,
+       /*click_count=*/1, MouseButtonDownModifier(button));
+   render_widget_host->ForwardMouseEvent(mouse_down);
+ 
+   const int button_down_modifier = MouseButtonDownModifier(button);
+   for (int32_t step = 1; step <= step_count; ++step) {
+-    const gfx::Point point = InterpolatePoint(from, to, step, step_count);
++    const gfx::Point point =
++        InterpolatePoint(*normalized_from, *normalized_to, step, step_count);
+     blink::WebMouseEvent mouse_move = BuildMouseEvent(
+         blink::WebInputEvent::Type::kMouseMove, point, view_bounds,
+         blink::WebMouseEvent::Button::kNoButton, /*click_count=*/0,
+@@ -3551,9 +3680,10 @@ SteadAgentControlService::PrivateBrowser
+   }
+ 
+   blink::WebMouseEvent mouse_up = BuildMouseEvent(
+-      blink::WebInputEvent::Type::kMouseUp, to, view_bounds, button,
++      blink::WebInputEvent::Type::kMouseUp, *normalized_to, view_bounds, button,
+       /*click_count=*/1, button_down_modifier);
+   render_widget_host->ForwardMouseEvent(mouse_up);
++  RestoreAgentInputBlock(tab_id, restore_input_block);
+ 
+   return broker_->MakeResult(
+       action_id, true, kRawMouseDragAccepted,
+@@ -3590,6 +3720,7 @@ mojom::ActionResultPtr SteadAgentControl
+         /*blocked_by=*/"surface", CurrentSnapshotGeneration(tab_id));
+   }
+ 
++  const bool restore_input_block = SuspendAgentInputBlock(tab_id);
+   content::RenderWidgetHostView* view =
+       web_contents->GetRenderWidgetHostView();
+   if (view) {
+@@ -3614,6 +3745,7 @@ mojom::ActionResultPtr SteadAgentControl
+                                        modifiers, base::TimeTicks::Now());
+   PopulateNativeKeyEvent(key_info, &key_up);
+   render_widget_host->ForwardKeyboardEvent(key_up);
++  RestoreAgentInputBlock(tab_id, restore_input_block);
+ 
+   return broker_->MakeResult(
+       action_id, true, kRawKeyEventAccepted,
+@@ -3691,6 +3823,10 @@ SteadAgentControlService::PrivateBrowser
+   snapshot->capture_time_us =
+       static_cast<uint64_t>((base::TimeTicks::Now() - start_time)
+                                 .InMicroseconds());
++  content::RenderWidgetHostView* root_view =
++      web_contents->GetRenderWidgetHostView();
++  snapshot->viewport_size =
++      root_view ? root_view->GetVisibleViewportSize() : gfx::Size();
+   snapshot->root = std::move(root);
+   auto snapshot_index = std::make_unique<SnapshotIndex>();
+   snapshot_index->generation = generation;
+@@ -3884,6 +4020,7 @@ void SteadAgentControlService::PrivateBr
+     int32_t action_id,
+     uint64_t cancel_epoch,
+     const std::string& frame_token,
++    const gfx::Size& viewport_size,
+     SteadAgentControlService::ScreenshotCallback callback,
+     const content::CopyFromSurfaceResult& copy_result) {
+   if (broker_->WasCancelledSince(tab_id, cancel_epoch)) {
+@@ -3945,10 +4082,16 @@ void SteadAgentControlService::PrivateBr
+ 
+   std::optional<mojo_base::BigBuffer> buffer;
+   buffer.emplace(base::span<const uint8_t>(png->data(), png->size()));
+-  broker_->FinishScreenshot(
+-      tab_id, action_id, std::move(callback),
+-      MakeReadResult(true, kScreenshotCaptured, "Screenshot captured."),
+-      std::move(buffer));
++  auto result =
++      MakeReadResult(true, kScreenshotCaptured, "Screenshot captured.");
++  result->viewport_size = viewport_size;
++  result->image_size = gfx::Size(bitmap.width(), bitmap.height());
++  screenshot_coordinate_spaces_[tab_id] = {
++      .viewport_size = viewport_size,
++      .image_size = result->image_size,
++  };
++  broker_->FinishScreenshot(tab_id, action_id, std::move(callback),
++                            std::move(result), std::move(buffer));
+ }
+ 
+ void SteadAgentControlService::FinishSnapshot(
+@@ -4866,6 +5009,7 @@ void SteadAgentControlService::Key(int32
+ }
+ 
+ void SteadAgentControlService::Scroll(int32_t tab_id,
++                                      const std::optional<gfx::Point>& point,
+                                       int32_t dx,
+                                       int32_t dy,
+                                       ScrollCallback callback) {
+@@ -4904,16 +5048,8 @@ void SteadAgentControlService::Scroll(in
+     return;
+   }
+ 
+-  mojom::ActionResultPtr gate =
+-      MaybeGateAction(action_id, tab_id, action_class, operation,
+-                      ScrollApprovalScope(tab_id, dx, dy));
+-  if (gate) {
+-    finish(std::move(gate));
+-    return;
+-  }
+-
+   mojom::ActionResultPtr result =
+-      browser_control_->Scroll(tab_id, action_id, dx, dy);
++      browser_control_->Scroll(tab_id, action_id, point, dx, dy);
+   if (result->ok) {
+     const TabEventState event_state =
+         browser_control_->GetTabEventState(tab_id);
+@@ -5376,6 +5512,7 @@ void SteadAgentControlService::PrivateBr
+     int32_t tab_id) {
+   snapshot_generations_.erase(tab_id);
+   snapshot_indexes_.erase(tab_id);
++  screenshot_coordinate_spaces_.erase(tab_id);
+   scoped_ax_modes_.erase(tab_id);
+   agent_owned_tabs_.erase(tab_id);
+   agent_owner_sessions_.erase(tab_id);
+@@ -5412,6 +5549,28 @@ void SteadAgentControlService::PrivateBr
+   }
+ }
+ 
++bool SteadAgentControlService::PrivateBrowserControl::SuspendAgentInputBlock(
++    int32_t tab_id) {
++  if (!IsAgentOwnedTab(tab_id)) {
++    return false;
++  }
++  return agent_input_blocks_.erase(tab_id) > 0;
++}
++
++void SteadAgentControlService::PrivateBrowserControl::RestoreAgentInputBlock(
++    int32_t tab_id,
++    bool suspended) {
++  if (!suspended || !IsAgentOwnedTab(tab_id) ||
++      agent_input_blocks_.contains(tab_id)) {
++    return;
++  }
++  content::WebContents* contents = FindTabById(tab_id);
++  if (contents) {
++    agent_input_blocks_.insert_or_assign(
++        tab_id, contents->IgnoreInputEvents(std::nullopt));
++  }
++}
++
+ void SteadAgentControlService::PrivateBrowserControl::ReleaseAgentOwnedTab(
+     int32_t tab_id) {
+   if (!agent_owned_tabs_.erase(tab_id)) {
+@@ -5496,6 +5655,7 @@ mojom::AxNodePtr SteadAgentControlServic
+   semantics.clickable = out->clickable;
+   semantics.editable = out->editable;
+   semantics.disabled = out->disabled;
++  semantics.has_checked = out->has_checked;
+   semantics.password = data.IsPasswordField();
+   semantics.has_bounds = out->has_bounds;
+   semantics.bounds = out->bounds;
+@@ -6262,12 +6422,38 @@ int32_t SteadAgentControlService::FindTa
+ bool SteadAgentControlService::PrivateBrowserControl::IsStaleFrame(
+     const mojom::FrameRef& frame_ref,
+     content::WebContents* web_contents) const {
+-  if (frame_ref.snapshot_generation !=
+-      CurrentSnapshotGeneration(frame_ref.tab_id)) {
+-    return true;
++  // Generation changes on every bounded observation, including observations
++  // that did not mutate the document. Treat the live AX tree and current
++  // snapshot index as authoritative instead of invalidating a still-identical
++  // frame solely because an automatic verification snapshot ran.
++  return !FindFrameForRef(web_contents, frame_ref);
++}
++
++std::optional<gfx::Point>
++SteadAgentControlService::PrivateBrowserControl::NormalizeInputPoint(
++    int32_t tab_id,
++    const gfx::Point& point,
++    const gfx::Size& viewport_size) const {
++  if (PointInViewport(point, viewport_size)) {
++    return point;
+   }
+ 
+-  return !FindFrameForRef(web_contents, frame_ref);
++  const auto coordinate_space = screenshot_coordinate_spaces_.find(tab_id);
++  if (coordinate_space == screenshot_coordinate_spaces_.end() ||
++      coordinate_space->second.viewport_size != viewport_size ||
++      coordinate_space->second.image_size.IsEmpty() || point.x() < 0 ||
++      point.y() < 0 ||
++      point.x() >= coordinate_space->second.image_size.width() ||
++      point.y() >= coordinate_space->second.image_size.height()) {
++    return std::nullopt;
++  }
++
++  const gfx::Size& image_size = coordinate_space->second.image_size;
++  return gfx::Point(
++      std::clamp(point.x() * viewport_size.width() / image_size.width(), 0,
++                 viewport_size.width() - 1),
++      std::clamp(point.y() * viewport_size.height() / image_size.height(), 0,
++                 viewport_size.height() - 1));
+ }
+ 
+ bool SteadAgentControlService::PrivateBrowserControl::SnapshotIndexContains(
+@@ -6281,9 +6467,8 @@ bool SteadAgentControlService::PrivateBr
+     return false;
+   }
+ 
+-  return index->second->generation == ref.frame->snapshot_generation &&
+-         index->second->node_keys.contains(
+-             NodeIndexKey(ref.frame->frame_token, ref.ax_node_id));
++  return index->second->node_keys.contains(
++      NodeIndexKey(ref.frame->frame_token, ref.ax_node_id));
+ }
+ 
+ const NodeSemanticData*
+@@ -6294,8 +6479,7 @@ SteadAgentControlService::PrivateBrowser
+   }
+ 
+   const auto index = snapshot_indexes_.find(ref.frame->tab_id);
+-  if (index == snapshot_indexes_.end() ||
+-      index->second->generation != ref.frame->snapshot_generation) {
++  if (index == snapshot_indexes_.end() || !index->second) {
+     return nullptr;
+   }
+ 
+@@ -6312,8 +6496,7 @@ bool SteadAgentControlService::PrivateBr
+   }
+ 
+   const auto index = snapshot_indexes_.find(ref.frame->tab_id);
+-  if (index == snapshot_indexes_.end() ||
+-      index->second->generation != ref.frame->snapshot_generation) {
++  if (index == snapshot_indexes_.end() || !index->second) {
+     return false;
+   }
+ 
+@@ -6333,8 +6516,7 @@ SteadAgentControlService::PrivateBrowser
+   }
+ 
+   const auto index = snapshot_indexes_.find(ref.frame->tab_id);
+-  if (index == snapshot_indexes_.end() ||
+-      index->second->generation != ref.frame->snapshot_generation) {
++  if (index == snapshot_indexes_.end() || !index->second) {
+     return mojom::ActionClass::kFormEntry;
+   }
+ 
+@@ -6420,7 +6602,6 @@ mojom::ActionResultPtr SteadAgentControl
+       action_class == mojom::ActionClass::kDestructive ||
+       action_class == mojom::ActionClass::kPayment ||
+       action_class == mojom::ActionClass::kFileAccess ||
+-      action_class == mojom::ActionClass::kRawInput ||
+       action_class == mojom::ActionClass::kEval;
+ 
+   if (!requires_confirmation) {
+@@ -6435,11 +6616,14 @@ mojom::ActionResultPtr SteadAgentControl
+       action_class == mojom::ActionClass::kCredential
+           ? "Saved-password use requires confirmation in ask-first mode."
+           : "High-risk action requires confirmation.";
++  const auto session = action_session_ids_.find(action_id);
++  const std::string session_id =
++      session == action_session_ids_.end() ? std::string() : session->second;
+   auto stored_request = mojom::ConfirmationRequest::New(
+-      action_id, tab_id, action_class, operation,
++      action_id, session_id, tab_id, action_class, operation,
+       reason);
+   auto outbound_request = mojom::ConfirmationRequest::New(
+-      action_id, tab_id, action_class, operation,
++      action_id, session_id, tab_id, action_class, operation,
+       reason);
+   pending_confirmations_[action_id] = std::move(stored_request);
+   pending_confirmation_scopes_[action_id] = approval_scope;
+@@ -6457,9 +6641,12 @@ void SteadAgentControlService::RecordAud
+     int32_t tab_id,
+     mojom::ActionClass action_class,
+     const std::string& operation) {
++  const auto session = action_session_ids_.find(result.action_id);
++  const std::string session_id =
++      session == action_session_ids_.end() ? std::string() : session->second;
+   auto entry = mojom::AuditEntry::New(
+-      result.action_id, next_audit_sequence_++, tab_id, action_class, operation,
+-      result.code, result.message, result.ok);
++      result.action_id, next_audit_sequence_++, session_id, tab_id,
++      action_class, operation, result.code, result.message, result.ok);
+ 
+   for (auto& observer : console_observers_) {
+     observer->OnAuditEntry(CloneAuditEntry(*entry));
+@@ -6470,6 +6657,10 @@ void SteadAgentControlService::RecordAud
+     audit_log_.pop_front();
+   }
+ 
++  if (!result.needs_confirmation) {
++    action_session_ids_.erase(result.action_id);
++  }
++
+   if (result.ok && !result.needs_confirmation && tab_id > 0 &&
+       action_class != mojom::ActionClass::kReadOnly) {
+     MarkTabDriving(tab_id);
+@@ -6484,16 +6675,18 @@ void SteadAgentControlService::NotifyCon
+ 
+   for (auto& observer : console_observers_) {
+     observer->OnConfirmation(mojom::ConfirmationRequest::New(
+-        request->action_id, request->tab_id, request->action_class,
++        request->action_id, request->session_id, request->tab_id,
++        request->action_class,
+         request->operation, request->reason));
+   }
+ }
+ 
+ mojom::AuditEntryPtr SteadAgentControlService::CloneAuditEntry(
+     const mojom::AuditEntry& entry) const {
+-  return mojom::AuditEntry::New(entry.action_id, entry.sequence, entry.tab_id,
+-                                entry.action_class, entry.operation,
+-                                entry.code, entry.message, entry.ok);
++  return mojom::AuditEntry::New(
++      entry.action_id, entry.sequence, entry.session_id, entry.tab_id,
++      entry.action_class, entry.operation, entry.code, entry.message,
++      entry.ok);
+ }
+ 
+ bool SteadAgentControlService::ConsumeApprovalGrant(
+@@ -6561,7 +6754,12 @@ uint32_t SteadAgentControlService::Priva
+ }
+ 
+ int32_t SteadAgentControlService::NextActionId() {
+-  return next_action_id_++;
++  const int32_t action_id = next_action_id_++;
++  if (!next_action_session_id_.empty()) {
++    action_session_ids_[action_id] = std::move(next_action_session_id_);
++    next_action_session_id_.clear();
++  }
++  return action_id;
+ }
+ 
+ mojom::ActionResultPtr SteadAgentControlService::MakeResult(
+Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
+===================================================================
+--- src.orig/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
++++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
+@@ -85,6 +85,11 @@ class SteadAgentControlService : public
+   bool IsAgentOwnedTabForUi(int32_t tab_id) const;
+   std::string AgentOwnerSessionForUi(int32_t tab_id) const;
+ 
++  // The brain calls this immediately before dispatching one broker action.
++  // NextActionId consumes it so confirmations and audit entries remain bound
++  // to the chat that initiated them.
++  void SetNextActionSession(const std::string& session_id);
++
+   // mojom::AgentControl:
+   void Observe(mojo::PendingRemote<mojom::ControlObserver> observer) override;
+   void ListTabs(ListTabsCallback callback) override;
+@@ -151,6 +156,7 @@ class SteadAgentControlService : public
+            int32_t modifiers,
+            KeyCallback callback) override;
+   void Scroll(int32_t tab_id,
++              const std::optional<gfx::Point>& point,
+               int32_t dx,
+               int32_t dy,
+               ScrollCallback callback) override;
+@@ -378,6 +384,8 @@ class SteadAgentControlService : public
+   base::flat_map<std::string, CachedCredential> credential_cache_;
+   std::deque<std::string> credential_cache_order_;
+   base::flat_map<int32_t, uint64_t> cancel_epochs_by_tab_;
++  std::string next_action_session_id_;
++  base::flat_map<int32_t, std::string> action_session_ids_;
+   // Tabs the agent is actively driving (tab_id -> last successful non-read
+   // action). Drives the ConsoleObserver driving signal and the tab overlay.
+   base::flat_map<int32_t, base::TimeTicks> last_drive_action_by_tab_;
+Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
+===================================================================
+--- src.orig/chrome/browser/ui/stead/brain/stead_brain_service.cc
++++ src/chrome/browser/ui/stead/brain/stead_brain_service.cc
+@@ -54,6 +54,13 @@ base::DictValue EmptyDict() {
+   return base::DictValue();
+ }
+ 
++base::DictValue SizeToDict(const gfx::Size& size) {
++  base::DictValue out;
++  out.Set("width", size.width());
++  out.Set("height", size.height());
++  return out;
++}
++
+ std::optional<int32_t> FindInt32(const base::DictValue& dict,
+                                  std::string_view key);
+ 
+@@ -78,6 +85,12 @@ base::DictValue ReadResultToDict(const m
+   out.Set("code", result.code);
+   out.Set("message", result.message);
+   out.Set("blocked_by", result.blocked_by);
++  if (!result.viewport_size.IsEmpty()) {
++    out.Set("viewport_size", SizeToDict(result.viewport_size));
++  }
++  if (!result.image_size.IsEmpty()) {
++    out.Set("image_size", SizeToDict(result.image_size));
++  }
+   return out;
+ }
+ 
+@@ -145,6 +158,7 @@ base::DictValue SnapshotToDict(const moj
+   out.Set("node_count", static_cast<int>(snapshot.node_count));
+   out.Set("truncated", snapshot.truncated);
+   out.Set("capture_time_us", base::NumberToString(snapshot.capture_time_us));
++  out.Set("viewport_size", SizeToDict(snapshot.viewport_size));
+   if (snapshot.root) {
+     out.Set("root", AxNodeToDict(*snapshot.root));
+   }
+@@ -440,6 +454,7 @@ void SteadBrainService::SendMessage(cons
+                                     const std::string& text,
+                                     std::vector<mojom::BrainTabContextPtr> tab_contexts,
+                                     mojom::BrainModelSelectionPtr model,
++                                    const std::string& reasoning_effort,
+                                     mojom::BrainPermissionMode permission_mode,
+                                     SendMessageCallback callback) {
+   const std::string request_id = NextRequestId();
+@@ -448,6 +463,7 @@ void SteadBrainService::SendMessage(cons
+   request.Set("text", text);
+   request.Set("permission_mode",
+               PermissionModeToProtocolString(permission_mode));
++  request.Set("reasoning_effort", reasoning_effort);
+   profile_->GetPrefs()->SetString(kLastPermissionModePref,
+                                   PermissionModeToProtocolString(permission_mode));
+   session_permission_modes_[session_id] = permission_mode;
+@@ -478,6 +494,7 @@ void SteadBrainService::SendMessage(cons
+     event.Set("session_id", session_id);
+     event.Set("text", text);
+     event.Set("permission_mode", PermissionModeToProtocolString(permission_mode));
++    event.Set("reasoning_effort", reasoning_effort);
+     if (!tab_contexts.empty()) {
+       base::ListValue tabs;
+       for (const auto& tab_context : tab_contexts) {
+@@ -864,6 +881,10 @@ void SteadBrainService::HandleToolCall(c
+     return;
+   }
+ 
++  // Bind the next native action to this chat before it receives an action id.
++  // The broker consumes this value synchronously in NextActionId().
++  control->SetNextActionSession(session_id);
++
+   auto action_done = [](base::WeakPtr<SteadBrainService> service,
+                         std::string session_id, std::string tool_call_id,
+                         mojom::ActionResultPtr result) {
+@@ -1171,6 +1192,7 @@ void SteadBrainService::HandleToolCall(c
+ 
+   if (tool_name == "browser.scroll") {
+     std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    std::optional<gfx::Point> point = ParsePoint(arguments, "point");
+     std::optional<int32_t> dx = FindInt32(arguments, "dx");
+     std::optional<int32_t> dy = FindInt32(arguments, "dy");
+     if (!tab_id || !dx || !dy) {
+@@ -1178,7 +1200,7 @@ void SteadBrainService::HandleToolCall(c
+                     "browser.scroll requires tab_id, dx, and dy.");
+       return;
+     }
+-    control->Scroll(*tab_id, *dx, *dy,
++    control->Scroll(*tab_id, point, *dx, *dy,
+                     base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
+                                    session_id, tool_call_id));
+     return;
