@@ -57,4 +57,6 @@ stead/agent-control/drive-overlay-and-tab-context.patch
 stead/agent-control/agent-tab-takeover.patch
 stead/agent-control/agent-session-ownership.patch
 stead/agent-control/session-scoped-approvals.patch
+stead/agent-control/accessible-dom-target-resolution.patch
+stead/agent-control/preserve-semantic-link-destinations.patch
 stead/brain/replay-ready-to-new-observers.patch

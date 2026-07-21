@@ -1,0 +1,69 @@
+diff --git a/chrome/browser/ui/stead/agent_control/agent_control.mojom b/chrome/browser/ui/stead/agent_control/agent_control.mojom
+--- a/chrome/browser/ui/stead/agent_control/agent_control.mojom
++++ b/chrome/browser/ui/stead/agent_control/agent_control.mojom
+@@ -29,6 +29,11 @@ struct AxNode {
+ 
+   string role;
+   string name;
++  // Resolved destination for links, sourced from AX kUrl when available.
++  string url;
++  // HTML radio/checkbox group name when exposed by Blink's AX tree.
++  string html_input_name;
++
+ 
+   bool has_value;
+   string value;
+diff --git a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+--- a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+@@ -266,6 +266,7 @@ struct NodeSemanticData {
+ struct NodeSemanticData {
+   std::string role;
+   std::string name;
++  std::string url;
+   std::string value;
+   bool clickable = false;
+   bool editable = false;
+@@ -5642,6 +5643,10 @@ mojom::AxNodePtr BuildAxNode(
+   out->role = ui::ToString(node->GetRole());
+   out->name = SnapshotStringAttribute(
+       data, ax::mojom::StringAttribute::kName);
++  out->url = SnapshotStringAttribute(
++      data, ax::mojom::StringAttribute::kUrl);
++  out->html_input_name = SnapshotStringAttribute(
++      data, ax::mojom::StringAttribute::kHtmlInputName);
+   out->has_value = state->include_values &&
+                    data.HasStringAttribute(ax::mojom::StringAttribute::kValue) &&
+                    !ShouldRedactSnapshotValue(data);
+@@ -5671,6 +5676,7 @@ mojom::AxNodePtr BuildAxNode(
+   NodeSemanticData semantics;
+   semantics.role = out->role;
+   semantics.name = out->name;
++  semantics.url = out->url;
+   semantics.value = out->value;
+   semantics.clickable = out->clickable;
+   semantics.editable = out->editable;
+@@ -5684,6 +5690,5 @@ mojom::AxNodePtr BuildAxNode(
+   semantics.html_id = SnapshotStringAttribute(
+       data, ax::mojom::StringAttribute::kHtmlId);
+-  semantics.html_input_name = SnapshotStringAttribute(
+-      data, ax::mojom::StringAttribute::kHtmlInputName);
++  semantics.html_input_name = out->html_input_name;
+   semantics.class_name = SnapshotStringAttribute(
+       data, ax::mojom::StringAttribute::kClassName);
+diff --git a/chrome/browser/ui/stead/brain/stead_brain_service.cc b/chrome/browser/ui/stead/brain/stead_brain_service.cc
+--- a/chrome/browser/ui/stead/brain/stead_brain_service.cc
++++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
+@@ -117,6 +117,12 @@ base::DictValue AxNodeToDict(const mojom::AxNode& node) {
+   }
+   out.Set("role", node.role);
+   out.Set("name", node.name);
++  if (!node.url.empty()) {
++    out.Set("url", node.url);
++  }
++  if (!node.html_input_name.empty()) {
++    out.Set("html_input_name", node.html_input_name);
++  }
+   out.Set("has_value", node.has_value);
+   if (node.has_value) {
+     out.Set("value", node.value);

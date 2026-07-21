@@ -1,0 +1,70 @@
+--- src.orig/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
++++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+@@ -1072,6 +1072,7 @@
+   const std::string id = base::GetQuotedJSONString(data.html_id);
+   const std::string name = base::GetQuotedJSONString(data.html_input_name);
+   const std::string class_name = base::GetQuotedJSONString(data.class_name);
++  const std::string accessible_name = base::GetQuotedJSONString(data.name);
+   const char* should_scroll = scroll_into_view ? "true" : "false";
+   const char* should_activate = activate ? "true" : "false";
+ 
+@@ -1080,7 +1081,8 @@
+ (() => {
+   const x = %d;
+   const y = %d;
+-  const hints = {tagName: %s, id: %s, name: %s, className: %s};
++  const hints = {tagName: %s, id: %s, name: %s, className: %s,
++      accessibleName: %s};
+   const clip = (value, limit = 160) => {
+     value = value == null ? '' : String(value);
+     return value.length > limit ? value.slice(0, limit) : value;
+@@ -1090,6 +1092,8 @@
+     return value.split(/\s+/).filter(Boolean)[0] || '';
+   };
+   const hintedClass = firstClass(hints.className);
++  const normalizeText = (value) => clip(value, 512)
++      .replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+   const describe = (el) => {
+     if (!el || !el.tagName) return '';
+     const cls = firstClass(typeof el.className === 'string' ? el.className : '');
+@@ -1115,6 +1119,13 @@
+     }
+     return checks > 0 && hits === checks;
+   };
++  const matchesAccessibleName = (el) => {
++    const expected = normalizeText(hints.accessibleName);
++    if (!expected || !el) return true;
++    const aria = normalizeText(el.getAttribute && el.getAttribute('aria-label'));
++    const text = normalizeText(el.textContent);
++    return aria === expected || text === expected || text.includes(expected);
++  };
+   const pushAll = (target, values) => {
+     for (const value of Array.from(values || [])) {
+       if (value && !target.includes(value)) target.push(value);
+@@ -1136,9 +1147,14 @@
+   const initialStack = x >= 0 && y >= 0
+       ? Array.from(document.elementsFromPoint(x, y)).slice(0, 8)
+       : [];
+-  const targetIndex = initialStack.findIndex(matchesHints);
++  const targetIndex = initialStack.findIndex(
++      candidate => matchesHints(candidate) && matchesAccessibleName(candidate));
+   let el = targetIndex >= 0 ? initialStack[targetIndex] : null;
+-  if (!el) el = hinted.find(matchesHints) || initialStack[0] || null;
++  if (!el) {
++    el = hinted.find(candidate =>
++        matchesHints(candidate) && matchesAccessibleName(candidate)) ||
++        hinted.find(matchesHints) || initialStack[0] || null;
++  }
+   let activationEl = el;
+   if (el && el.matches && el.matches('input[type="radio"], input[type="checkbox"]')) {
+     let label = null;
+@@ -1208,7 +1224,8 @@
+ })()
+ )JS",
+       center_x, center_y, tag.c_str(), id.c_str(), name.c_str(),
+-      class_name.c_str(), should_scroll, should_activate));
++      class_name.c_str(), accessible_name.c_str(), should_scroll,
++      should_activate));
+ }
+ 
+ std::optional<blink::WebMouseEvent::Button> MouseButtonFromInt(int32_t button) {
