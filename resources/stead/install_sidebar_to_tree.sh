@@ -19,7 +19,10 @@ if [ ! -f "$_bundle/index.html" ]; then
 fi
 
 mkdir -p "$_dest"
-# Copy the built assets in alongside the patched-in BUILD.gn (don't clobber it).
+# Remove the previous hash-named bundle while preserving the patched-in build
+# definition. Otherwise every UI rebuild leaves stale assets in the GRIT pack.
+find "$_dest" -mindepth 1 -maxdepth 1 ! -name BUILD.gn -exec rm -rf {} +
+# Copy the current built assets in alongside the patched-in BUILD.gn.
 cp -R "$_bundle/." "$_dest/"
 
 # Regenerate the GRIT manifest for the (hash-named) bundle files.

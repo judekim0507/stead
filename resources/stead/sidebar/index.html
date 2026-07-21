@@ -1,32 +1,41 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
-		<link href="/_app/immutable/entry/start.DFvEUYyU.js" rel="modulepreload">
-		<link href="/_app/immutable/chunks/CqRxiKy9.js" rel="modulepreload">
-		<link href="/_app/immutable/chunks/op9GwGzX.js" rel="modulepreload">
-		<link href="/_app/immutable/entry/app.BQJZtILq.js" rel="modulepreload">
+		<script>
+			(() => {
+				const query = matchMedia('(prefers-color-scheme: dark)');
+				const apply = (dark) => document.documentElement.classList.toggle('dark', dark);
+				globalThis.steadThemeChanged = apply;
+				apply(query.matches);
+				query.addEventListener('change', (event) => apply(event.matches));
+			})();
+		</script>
+		<link href="/_app/immutable/entry/start.B7TgZ5tK.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/DWlVmPz0.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/J1EoBZp2.js" rel="modulepreload">
+		<link href="/_app/immutable/entry/app.B3QOs7nZ.js" rel="modulepreload">
 		<link href="/_app/immutable/chunks/DYl5dUZ5.js" rel="modulepreload">
 		<link href="/_app/immutable/chunks/xihTtKlq.js" rel="modulepreload">
-		<link href="/_app/immutable/nodes/0.DORdkUuv.js" rel="modulepreload">
+		<link href="/_app/immutable/nodes/0.BmPIphFW.js" rel="modulepreload">
 		
-		<link href="/_app/immutable/assets/0.uTgPL30a.css" rel="stylesheet">
+		<link href="/_app/immutable/assets/0.DTqVb9W8.css" rel="stylesheet">
 	</head>
 	<body data-sveltekit-preload-data="hover">
 		<div style="display: contents">
 			<script>
 				{
-					__sveltekit_16gda57 = {
+					__sveltekit_1fjwvtn = {
 						base: ""
 					};
 
 					const element = document.currentScript.parentElement;
 
 					Promise.all([
-						import("/_app/immutable/entry/start.DFvEUYyU.js"),
-						import("/_app/immutable/entry/app.BQJZtILq.js")
+						import("/_app/immutable/entry/start.B7TgZ5tK.js"),
+						import("/_app/immutable/entry/app.B3QOs7nZ.js")
 					]).then(([kit, app]) => {
 						kit.start(app, element);
 					});
