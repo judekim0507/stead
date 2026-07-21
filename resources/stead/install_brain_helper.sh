@@ -11,7 +11,7 @@ _app_dir="$1"
 _arch="${2:-$(uname -m)}"
 _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _root_dir="$(cd "$_script_dir/../.." && pwd)"
-_brain_dir="$(cd "$_root_dir/../brain" && pwd)"
+_brain_dir="$(cd "$_root_dir/../stead-brain" && pwd)"
 
 case "$_arch" in
   arm64|aarch64)
