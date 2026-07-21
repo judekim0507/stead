@@ -1,0 +1,179 @@
+--- a/content/public/common/url_constants.h
++++ b/content/public/common/url_constants.h
+@@ -19,6 +19,6 @@ inline constexpr char kChromeDevToolsScheme[] = "devtools";
+ inline constexpr char kChromeErrorScheme[] = "chrome-error";
+ inline constexpr char kChromeUIScheme[] = "chrome";  // Used for WebUIs.
+-inline constexpr char kHeliumUIScheme[] = "helium";  // also used for webuis :3
++inline constexpr char kHeliumUIScheme[] = "stead";  // Stead's public WebUI scheme.
+ inline constexpr char kChromeNativeScheme[] = "chrome-native";
+ inline constexpr char kChromeUIUntrustedScheme[] = "chrome-untrusted";
+ inline constexpr char kViewSourceScheme[] = "view-source";
+--- a/components/url_formatter/url_fixer.cc
++++ b/components/url_formatter/url_fixer.cc
+@@ -39,7 +39,7 @@ namespace {
+ 
+ // Hardcode these constants to avoid dependences on //chrome and //content.
+ const char kChromeUIScheme[] = "chrome";
+-const char kHeliumUIScheme[] = "helium";
++const char kHeliumUIScheme[] = "stead";
+ const char kDevToolsScheme[] = "devtools";
+ const char kChromeUIDefaultHost[] = "version";
+ const char kViewSourceScheme[] = "view-source";
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -7299,6 +7299,16 @@ bool ChromeContentBrowserClient::HandleWebUI(
+     content::BrowserContext* browser_context) {
+   DCHECK(browser_context);
+ 
++  // The public Stead scheme is an alias for Chromium's internal WebUI scheme.
++  // Omnibox navigations can reach this handler without passing through
++  // browser_navigator.cc, so normalize here before WebUI controller lookup.
++  if (url->SchemeIs(content::kHeliumUIScheme)) {
++    GURL::Replacements replacements;
++    replacements.SetSchemeStr(content::kChromeUIScheme);
++    *url = url->ReplaceComponents(replacements);
++  }
++
+   // Rewrite chrome://help to chrome://settings/help.
+   if (url->SchemeIs(content::kChromeUIScheme) &&
+       url->GetHost() == chrome::kChromeUIHelpHost) {
+--- a/components/omnibox/browser/builtin_provider.cc
++++ b/components/omnibox/browser/builtin_provider.cc
+@@ -74,7 +74,7 @@ void BuiltinProvider::DoBuiltinAutocompletion(AutocompleteInput input) {
+     for (const std::u16string& url :
+          client_->GetBuiltinsToProvideAsUserTypes()) {
+       DCHECK(url.starts_with(u"chrome://"));
+-      AddBuiltinMatch(std::u16string(url).replace(0, 6, u"helium"),
++      AddBuiltinMatch(std::u16string(url).replace(0, 6, u"stead"),
+                       std::u16string(), styles);
+     }
+   } else {
+--- a/chrome/browser/resources/tab_search/tab_search_item.ts
++++ b/chrome/browser/resources/tab_search/tab_search_item.ts
+@@ -262,8 +262,8 @@ export class TabSearchItemElement extends CrLitElement {
+ 
+     // Show chrome:// if it's a chrome internal url
+     const protocol = new URL(normalizeURL(data.tab.url)).protocol;
+-    if (protocol === 'chrome:' || protocol === 'helium:') {
+-      this.$.secondaryTextInner.prepend(document.createTextNode('helium://'));
++    if (protocol === 'chrome:' || protocol === 'stead:') {
++      this.$.secondaryTextInner.prepend(document.createTextNode('stead://'));
+     }
+   }
+ 
+--- a/chrome/browser/ui/browser.cc
++++ b/chrome/browser/ui/browser.cc
+@@ -3264,6 +3264,14 @@ void Browser::ProcessPendingUIUpdates() {
+           (content::INVALIDATE_TYPE_TAB | content::INVALIDATE_TYPE_TITLE)) {
+         window_->UpdateTitleBar();
+       }
++      if ((flags & content::INVALIDATE_TYPE_TITLE) &&
++          (contents->GetLastCommittedURL().SchemeIs(content::kChromeUIScheme) ||
++           contents->GetLastCommittedURL().SchemeIs(content::kHeliumUIScheme)) &&
++          contents->GetLastCommittedURL().host() == chrome::kSteadChatHost) {
++        // The Stead chat omnibox displays the document title rather than its
++        // internal URL, so title changes also invalidate the location text.
++        UpdateToolbar(false);
++      }
+     }
+ 
+     // Updates that don't depend upon the selected state go here.
+--- a/chrome/browser/ui/omnibox/chrome_omnibox_client.cc
++++ b/chrome/browser/ui/omnibox/chrome_omnibox_client.cc
+@@ -101,6 +101,7 @@
+ #include "content/public/browser/render_widget_host.h"
+ #include "content/public/browser/render_widget_host_view.h"
+ #include "content/public/browser/web_contents.h"
++#include "content/public/common/url_constants.h"
+ #include "extensions/buildflags/buildflags.h"
+ #include "extensions/common/constants.h"
+ #include "net/traffic_annotation/network_traffic_annotation.h"
+@@ -137,6 +138,26 @@
+ 
+ namespace {
+ 
++bool IsSteadChatURL(const GURL& url) {
++  return (url.SchemeIs(content::kChromeUIScheme) ||
++          url.SchemeIs(content::kHeliumUIScheme)) &&
++         url.host() == chrome::kSteadChatHost;
++}
++
++std::u16string SteadChatTitle(const ChromeOmniboxClient& client) {
++  const std::u16string& title = client.GetTitle();
++  if (title.empty() ||
++      base::StartsWith(title, u"chrome://",
++                       base::CompareCase::INSENSITIVE_ASCII) ||
++      base::StartsWith(title, u"stead://",
++                       base::CompareCase::INSENSITIVE_ASCII) ||
++      base::StartsWith(title, u"helium://",
++                       base::CompareCase::INSENSITIVE_ASCII)) {
++    return u"New chat";
++  }
++  return title;
++}
++
+ using ExtensionControlledDialogResult =
+     ChromeOmniboxClient::ExtensionControlledDialogResult;
+ using predictors::AutocompleteActionPredictor;
+@@ -402,15 +423,25 @@ gfx::Image ChromeOmniboxClient::GetFaviconForPageUrl(
+ }
+ 
+ std::u16string ChromeOmniboxClient::GetFormattedFullURL() const {
++  if (IsSteadChatURL(GetURL())) {
++    return SteadChatTitle(*this);
++  }
+   return location_bar_->GetLocationBarModel()->GetFormattedFullURL();
+ }
+ 
+ std::u16string ChromeOmniboxClient::GetURLForDisplay() const {
+   OmniboxController* omnibox_controller = location_bar_->GetOmniboxController();
+   OmniboxEditModel* edit_model =
+       omnibox_controller ? omnibox_controller->edit_model() : nullptr;
+   bool in_progress = edit_model && edit_model->user_input_in_progress();
++  bool focused =
++      edit_model && edit_model->focus_state() != OMNIBOX_FOCUS_NONE;
+ 
++  if (IsSteadChatURL(GetURL()) && !in_progress) {
++    return focused ? SteadChatTitle(*this)
++                   : base::StrCat({u"Chat ", SteadChatTitle(*this)});
++  }
++
+   if (ShouldUseMinimalLocationBar() && !in_progress) {
+     return location_bar_->GetLocationBarModel()->GetURLForDisplay(
+         /*trim_after_host_name=*/true);
+@@ -508,7 +539,8 @@ void ChromeOmniboxClient::OnFocusChanged(
+   if (!location_bar_->GetWebContents()) {
+     return;
+   }
+-  if (GetPrefs()->GetBoolean(prefs::kHeliumMinimalLocationBar)) {
++  if (GetPrefs()->GetBoolean(prefs::kHeliumMinimalLocationBar) ||
++      IsSteadChatURL(GetURL())) {
+     location_bar_->UpdateWithoutTabRestore();
+   }
+   if (auto* helper =
+--- a/chrome/browser/ui/views/omnibox/omnibox_view_views.cc
++++ b/chrome/browser/ui/views/omnibox/omnibox_view_views.cc
+@@ -94,6 +94,7 @@
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/web_contents.h"
++#include "content/public/common/url_constants.h"
+ #include "extensions/common/constants.h"
+ #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+@@ -464,5 +465,15 @@ void OmniboxViewViews::EmphasizeURLComponents() {
+   const GURL navigation_url =
+       controller()->client()->GetNavigationEntryURL();
++  if ((navigation_url.SchemeIs(content::kChromeUIScheme) ||
++       navigation_url.SchemeIs(content::kHeliumUIScheme)) &&
++      navigation_url.host() == chrome::kSteadChatHost &&
++      GetText().starts_with(u"Chat ")) {
++    SetEmphasis(true, gfx::Range::InvalidRange());
++    ApplyColor(
++        SkColorSetA(GetColorProvider()->GetColor(kColorOmniboxText), 0x80),
++        gfx::Range(0, 4));
++    return;
++  }
+   // If the current contents is a URL, turn on special URL rendering mode in
+   // RenderText.
+   const bool text_is_url = controller()->edit_model()->CurrentTextIsURL();

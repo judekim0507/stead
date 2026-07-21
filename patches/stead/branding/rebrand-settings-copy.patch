@@ -1,0 +1,98 @@
+--- a/chrome/app/settings_chromium_strings.grdp
++++ b/chrome/app/settings_chromium_strings.grdp
+@@ -304,3 +304,3 @@
+   <message name="IDS_SETTINGS_SUGGEST_PREF_DESC_HELIUM" desc="The description of the checkbox to enable/disable sending omnibox input to the user's default search engine to get additional suggestions.">
+-    When you type in the address bar, Helium sends what you type to your default search engine to get suggestions. This is off in Incognito.
++    When you type in the address bar, Stead sends what you type to your default search engine to get suggestions. This is off in Incognito.
+   </message>
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -1351,3 +1351,3 @@
+         <message name="IDS_SETTINGS_LANGUAGES_DICTIONARY_DOWNLOAD_FAILED_HELP_HELIUM" desc="Error message when spell dictionary download fails more than once possibly due to a network policy or configuration.">
+-          Please check that Helium services are enabled (including spell check downloads) and make sure that the firewall is not blocking downloads from Helium servers.
++          Please check that Stead services are enabled (including spell check downloads) and make sure that the firewall is not blocking downloads from Stead servers.
+         </message>
+@@ -1771,10 +1771,10 @@
+-    <!-- Helium Services Privacy Settings (helium://settings/privacy/services) -->
++    <!-- Stead Services Privacy Settings (stead://settings/privacy/services) -->
+     <message name="IDS_SETTINGS_HELIUM_SERVICES" desc="Name of the page which controls connectivity to Helium services">
+-      Helium services
++      Stead services
+     </message>
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_DESCRIPTION" desc="Description of the controls available on the Helium services settings page">
+-      Manage what Helium services are allowed in your browser
++      Manage what Stead services are allowed in your browser
+     </message>
+     <message name="IDS_SETTINGS_HELIUM_SCHEMA_NOTICE_TITLE" desc="Title of the alert shown when Helium services have a change in behavior">
+-      Updates to Helium services:
++      Updates to Stead services:
+     </message>
+@@ -1787,3 +1787,3 @@
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_SETUP_PENDING_TEXT" desc="Description shown in services settings when user has not completed onboarding">
+-      Helium services are not available until setup is complete to ensure your privacy and consent.
++      Stead services are not available until setup is complete to ensure your privacy and consent.
+     </message>
+@@ -1793,6 +1793,6 @@
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_TOGGLE" desc="Global toggle for enabling/disabling of all Helium services">
+-      Allow connecting to Helium services
++      Allow connecting to Stead services
+     </message>
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_TOGGLE_DESCRIPTION" desc="Description of the toggle for enabling/disabling of all Helium services">
+-      When enabled, Helium will be able to connect to anonymous web services to provide additional functionality. When disabled, additional features will not work.
++      When enabled, Stead will be able to connect to anonymous web services to provide additional functionality. When disabled, additional features will not work.
+     </message>
+@@ -1802,3 +1802,3 @@
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_EXT_PROXY_TOGGLE_DESCRIPTION" desc="Description of the toggle for enabling/disabling of downloading and proxying extensions">
+-      When enabled, Helium will proxy extension downloads and updates to protect your privacy. When disabled, downloading and updating extensions will not work.
++      When enabled, Stead will proxy extension downloads and updates to protect your privacy. When disabled, downloading and updating extensions will not work.
+     </message>
+@@ -1808,3 +1808,3 @@
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_BANGS_TOGGLE_DESCRIPTION" desc="Description of the toggle for enabling/disabling of downloading bangs">
+-      Helium will fetch a list of bangs that help you browse the Internet faster, such as !w or !gh. When disabled, bangs will not work.
++      Stead will fetch a list of bangs that help you browse the Internet faster, such as !w or !gh. When disabled, bangs will not work.
+     </message>
+@@ -1814,3 +1814,3 @@
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_SPELLCHECK_TOGGLE_DESCRIPTION" desc="Description of the for enabling/disabling of downloading spellcheck files">
+-      Helium will fetch dictionary files used for spell checking when requested. When disabled, spell checking will not work.
++      Stead will fetch dictionary files used for spell checking when requested. When disabled, spell checking will not work.
+     </message>
+@@ -1821,3 +1821,3 @@
+       <message name="IDS_SETTINGS_HELIUM_SERVICES_UPDATE_DESCRIPTION" desc="Description of the toggle for automatic update downloads">
+-        Helium will automatically check for updates and install them. This includes browser and component updates. We recommend keeping this setting enabled to ensure you get the latest features and security updates.
++        Stead will automatically check for updates and install them. This includes browser and component updates. We recommend keeping this setting enabled to ensure you get the latest features and security updates.
+       </message>
+@@ -1829,3 +1829,3 @@
+       <message name="IDS_SETTINGS_HELIUM_SERVICES_UPDATE_DESCRIPTION" desc="Description of the toggle for automatic update downloads">
+-        Helium will automatically check for component updates and install them. We recommend keeping this setting enabled. On Linux, browser updates are handled by your distro's package manager. Please check for Helium package updates at least every week.
++        Stead will automatically check for component updates and install them. We recommend keeping this setting enabled. On Linux, browser updates are handled by your distro's package manager. Please check for Stead package updates at least every week.
+       </message>
+@@ -1836,9 +1836,9 @@
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_UBO_DESCRIPTION" desc="Description of the toggle for automatic update downloads">
+-      Helium will fetch fresh filter lists for uBlock Origin. All requests to lists are proxied to protect your privacy. When disabled, default filter lists will be loaded from local storage, which are only updated along with Helium. Optional filter lists will be requested without proxying.
++      Stead will fetch fresh filter lists for uBlock Origin. All requests to lists are proxied to protect your privacy. When disabled, default filter lists will be loaded from local storage, which are only updated along with Stead. Optional filter lists will be requested without proxying.
+     </message>
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_OVERRIDE" desc="Text input for overriding the Helium services server">
+-      Use your own instance of Helium services
++      Use your own instance of Stead services
+     </message>
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_OVERRIDE_DESCRIPTION" desc="Description of the text input for overriding the Helium services server">
+-      You can host your own instance of Helium services and use it in your browser instead of the default one. HTTPS only.
++      You can host your own instance of Stead services and use it in your browser instead of the default one. HTTPS only.
+     </message>
+@@ -1848,3 +1848,3 @@
+     <message name="IDS_SETTINGS_HELIUM_SERVICES_OVERRIDE_ARIA_LABEL" desc="ARIA label of the text input for overriding the Helium services server">
+-      Custom origin URL for Helium services
++      Custom origin URL for Stead services
+     </message>
+@@ -2088,3 +2088,3 @@
+     <message name="IDS_SETTINGS_ENABLE_DO_NOT_TRACK_DIALOG_TEXT_HELIUM" desc="The text of a confirmation dialog that confirms that the user want to send the 'Do Not Track' header">
+-      Enabling "Do Not Track" means that Helium will include a request not to be tracked with your browsing traffic. Whether this request is honored depends on whether a website responds to it and on how it is interpreted. For example, some websites may respond by showing you ads that aren't personalized using your previous browsing data. Many websites may still track you regardless of the request.
++      Enabling "Do Not Track" means that Stead will include a request not to be tracked with your browsing traffic. Whether this request is honored depends on whether a website responds to it and on how it is interpreted. For example, some websites may respond by showing you ads that aren't personalized using your previous browsing data. Many websites may still track you regardless of the request.
+     </message>
+--- a/chrome/browser/resources/settings/privacy_page/services_page.html
++++ b/chrome/browser/resources/settings/privacy_page/services_page.html
+@@ -129,3 +129,3 @@
+         id="heliumOriginOverride"
+-        placeholder="https://services.helium.imput.net"
++        placeholder="https://services.example.com"
+         value="[[prefs.helium.services.origin_override.value]]"
