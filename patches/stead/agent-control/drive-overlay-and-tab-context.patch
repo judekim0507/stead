@@ -58,7 +58,7 @@ index 46fb0fb..d3be4ca 100644
  #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
  #include "chrome/browser/ui/tabs/tab_enums.h"
-@@ -204,6 +207,40 @@ constexpr int32_t kSteadProbeWorldId = content::ISOLATED_WORLD_ID_CONTENT_END;
+@@ -204,6 +207,55 @@ constexpr int32_t kSteadProbeWorldId = content::ISOLATED_WORLD_ID_CONTENT_END;
  constexpr int32_t kSteadEvalWorldId =
      content::ISOLATED_WORLD_ID_CONTENT_END + 1;
  
@@ -78,15 +78,30 @@ index 46fb0fb..d3be4ca 100644
 +  overlay.id = id;
 +  overlay.setAttribute('style',
 +      'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
-+      'background:rgba(8,12,20,0.22);' +
-+      'box-shadow:inset 0 0 0 3px rgba(34,211,238,0.6);');
++      'background:rgba(7,9,12,0.065);' +
++      'box-shadow:inset 0 0 0 2px rgba(103,213,238,0.68),' +
++      'inset 0 0 42px rgba(42,190,224,0.075);');
 +  const badge = document.createElement('div');
 +  badge.setAttribute('style',
-+      'position:fixed;top:12px;left:50%;transform:translateX(-50%);' +
-+      'padding:6px 14px;border-radius:999px;background:rgba(10,14,22,0.88);' +
-+      'color:#dff7fb;font:600 12px/1.4 -apple-system,system-ui,sans-serif;' +
-+      'letter-spacing:0.02em;box-shadow:0 4px 24px rgba(0,0,0,0.4);');
-+  badge.textContent = 'Stead is controlling this tab';
++      'position:fixed;top:12px;left:12px;display:flex;align-items:center;' +
++      'gap:8px;padding:6px 10px 6px 8px;' +
++      'border:1px solid rgba(255,255,255,0.13);border-radius:999px;' +
++      'background:rgba(19,20,23,0.94);color:rgba(248,250,252,0.96);' +
++      'font:600 12px/1.3 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;' +
++      'letter-spacing:-0.01em;white-space:nowrap;' +
++      'box-shadow:0 12px 36px -12px rgba(0,0,0,0.72),' +
++      'inset 0 1px 0 rgba(255,255,255,0.055);' +
++      'backdrop-filter:blur(18px) saturate(140%);' +
++      '-webkit-backdrop-filter:blur(18px) saturate(140%);');
++  const dot = document.createElement('span');
++  dot.setAttribute('style',
++      'display:block;width:7px;height:7px;border-radius:999px;' +
++      'background:#67d5ee;box-shadow:0 0 0 3px rgba(103,213,238,0.13),' +
++      '0 0 12px rgba(103,213,238,0.48);');
++  const label = document.createElement('span');
++  label.textContent = 'Stead is controlling this tab';
++  badge.appendChild(dot);
++  badge.appendChild(label);
 +  overlay.appendChild(badge);
 +  document.documentElement.appendChild(overlay);
 +})();)js";
