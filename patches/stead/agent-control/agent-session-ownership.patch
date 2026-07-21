@@ -113,7 +113,7 @@ index f23c32b..82790d3 100644
                                  ui::PAGE_TRANSITION_TYPED,
                                  /*is_renderer_initiated=*/false);
    content::WebContents* opened = window->OpenURL(
-@@ -2992,18 +3016,24 @@ mojom::ActionResultPtr SteadAgentControlService::PrivateBrowserControl::OpenTab(
+@@ -2992,18 +3016,39 @@ mojom::ActionResultPtr SteadAgentControlService::PrivateBrowserControl::OpenTab(
    TabStripModel* tab_strip = window->GetTabStripModel();
    if (agent_owned) {
      agent_owned_tabs_.insert(tab_id.id());
@@ -131,12 +131,27 @@ index f23c32b..82790d3 100644
 -                          kAgentTabGroupTitle,
 -                          tab_groups::TabGroupColorId::kCyan));
 +        if (tab_strip->SupportsTabGroups()) {
-+          const tab_groups::TabGroupId group_id =
-+              tab_strip->AddToNewGroup({index});
-+          tab_strip->ChangeTabGroupVisuals(
-+              group_id, tab_groups::TabGroupVisualData(
-+                            kAgentTabGroupTitle,
-+                            tab_groups::TabGroupColorId::kCyan));
++          std::optional<tab_groups::TabGroupId> agent_group_id;
++          for (const tab_groups::TabGroupId& group_id :
++               tab_strip->group_model()->ListTabGroups()) {
++            const TabGroup* group =
++                tab_strip->group_model()->GetTabGroup(group_id);
++            if (group &&
++                group->visual_data()->title() == kAgentTabGroupTitle) {
++              agent_group_id = group_id;
++              break;
++            }
++          }
++          if (agent_group_id) {
++            tab_strip->AddToExistingGroup({index}, *agent_group_id);
++          } else {
++            const tab_groups::TabGroupId group_id =
++                tab_strip->AddToNewGroup({index});
++            tab_strip->ChangeTabGroupVisuals(
++                group_id, tab_groups::TabGroupVisualData(
++                              kAgentTabGroupTitle,
++                              tab_groups::TabGroupColorId::kCyan));
++          }
 +        }
 +        // Activate only after ownership and input blockade are installed so
 +        // tab-selection observers can open the owning thread immediately.
