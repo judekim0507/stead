@@ -59,7 +59,7 @@ diff --git a/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.c
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/ui/webui/side_panel/stead_sidebar/stead_sidebar_ui.cc
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,193 @@
 +// Copyright 2026 The Stead Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -73,18 +73,78 @@ new file mode 100644
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/browser.h"
 +#include "chrome/browser/ui/browser_finder.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 +#include "chrome/browser/ui/navigator/browser_navigator.h"
 +#include "chrome/browser/ui/navigator/browser_navigator_params.h"
++#include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
 +#include "chrome/browser/ui/webui/favicon_source.h"
 +#include "chrome/common/webui_url_constants.h"
 +#include "chrome/grit/stead_sidebar_resources.h"
 +#include "chrome/grit/stead_sidebar_resources_map.h"
 +#include "components/favicon_base/favicon_url_parser.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/web_contents.h"
 +#include "content/public/browser/url_data_source.h"
 +#include "content/public/browser/web_ui.h"
 +#include "content/public/browser/web_ui_data_source.h"
++#include "net/base/url_util.h"
 +#include "services/network/public/mojom/content_security_policy.mojom.h"
++#include "ui/base/base_window.h"
 +#include "ui/webui/webui_util.h"
++
++namespace {
++
++bool IsSteadChatSession(const GURL& url, const std::string& session_id) {
++  const GURL chat_url(chrome::kSteadChatURL);
++  if (url.scheme() != chat_url.scheme() || url.host() != chat_url.host() ||
++      url.path() != chat_url.path()) {
++    return false;
++  }
++
++  std::string open_session_id;
++  return net::GetValueForKeyInQuery(url, "session", &open_session_id) &&
++         open_session_id == session_id;
++}
++
++tabs::TabInterface* FindOpenSteadChat(Profile* profile,
++                                      const std::string& session_id) {
++  tabs::TabInterface* open_chat = nullptr;
++  tabs::ForEachTabInterface([&](tabs::TabInterface* tab) {
++    BrowserWindowInterface* window = tab->GetBrowserWindowInterface();
++    content::WebContents* contents = tab->GetContents();
++    if (window && contents && window->GetProfile() == profile &&
++        IsSteadChatSession(contents->GetVisibleURL(), session_id)) {
++      open_chat = tab;
++    }
++    return open_chat == nullptr;
++  });
++  return open_chat;
++}
++
++void ActivateAsHumanTab(tabs::TabInterface* tab) {
++  BrowserWindowInterface* window = tab->GetBrowserWindowInterface();
++  if (!window) {
++    return;
++  }
++
++  TabStripModel* tab_strip = window->GetTabStripModel();
++  const int index = tab_strip ? tab_strip->GetIndexOfTab(tab)
++                              : TabStripModel::kNoTab;
++  if (index == TabStripModel::kNoTab) {
++    return;
++  }
++
++  // A user-triggered chat tab never belongs in Stead's agent tab group. This
++  // also repairs chat tabs created by older builds that inherited the group.
++  if (tab_strip->GetTabGroupForTab(index)) {
++    tab_strip->RemoveFromGroup({index});
++  }
++  tab_strip->ActivateTabAt(index);
++  window->GetWindow()->Activate();
++}
++
++}  // namespace
 +
 +SteadSidebarUI::SteadSidebarUI(content::WebUI* web_ui)
 +    : TopChromeWebUIController(web_ui, /*enable_chrome_send=*/true) {
@@ -142,21 +202,41 @@ new file mode 100644
 +}
 +
 +void SteadSidebarUI::HandleOpenFullChat(const base::ListValue& args) {
-+  Browser* browser =
-+      chrome::FindBrowserWithProfile(Profile::FromWebUI(web_ui()));
++  Profile* profile = Profile::FromWebUI(web_ui());
++  Browser* browser = chrome::FindBrowserWithProfile(profile);
 +  if (!browser) {
 +    return;
 +  }
 +
-+  std::string url(chrome::kSteadChatURL);
-+  if (!args.empty() && args[0].is_string() && !args[0].GetString().empty()) {
-+    url.append("?session=");
-+    url.append(base::EscapeQueryParamValue(args[0].GetString(), true));
++  std::string session_id;
++  if (!args.empty() && args[0].is_string()) {
++    session_id = args[0].GetString();
++  }
++  if (!session_id.empty()) {
++    if (tabs::TabInterface* open_chat =
++            FindOpenSteadChat(profile, session_id)) {
++      ActivateAsHumanTab(open_chat);
++      return;
++    }
++  }
++
++  std::string url = std::string(chrome::kSteadChatURL) + "?source=sidebar";
++  if (!session_id.empty()) {
++    url.append("&session=");
++    url.append(base::EscapeQueryParamValue(session_id, true));
 +  }
 +
 +  NavigateParams params(browser, GURL(url), ui::PAGE_TRANSITION_LINK);
 +  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
 +  Navigate(&params);
++
++  if (params.navigated_or_inserted_contents) {
++    tabs::TabInterface* new_tab = tabs::TabInterface::GetFromContents(
++        params.navigated_or_inserted_contents);
++    if (new_tab) {
++      ActivateAsHumanTab(new_tab);
++    }
++  }
 +}
 +
 +void SteadSidebarUI::HandleOpenAiSettings(const base::ListValue&) {
