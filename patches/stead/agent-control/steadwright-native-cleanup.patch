@@ -280,7 +280,7 @@ Index: src/chrome/browser/ui/stead/agent_control/BUILD.gn
 Index: src/chrome/browser/ui/stead/agent_control/agent_control.mojom
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/agent_control/agent_control.mojom	2026-09-09 00:09:21.451176644 -0700
-+++ src/chrome/browser/ui/stead/agent_control/agent_control.mojom	2026-09-09 04:03:06.434328787 -0700
++++ src/chrome/browser/ui/stead/agent_control/agent_control.mojom	2026-09-09 04:15:54.375587511 -0700
 @@ -4,146 +4,8 @@
  
  module stead.mojom;
@@ -675,10 +675,10 @@ Index: src/chrome/browser/ui/stead/agent_control/agent_control.mojom
 -  // a caller that falls behind can detect the gap rather than silently skip.
 -  GetNetworkLog(int32 tab_id, int32 after_event_id)
 -      => (array<NetworkRecord> records, int32 cursor);
-+  FillCredential(int32 tab_id, string frame_token, string marker,
-+      CredentialUsePolicy policy) => (ActionResult result);
-+  FillTotp(int32 tab_id, string frame_token, string marker,
-+      CredentialUsePolicy policy) => (ActionResult result);
++  FillCredential(int32 tab_id, string frame_token, string credential_handle,
++      string marker, CredentialUsePolicy policy) => (ActionResult result);
++  FillTotp(int32 tab_id, string frame_token, string credential_handle,
++      string marker, CredentialUsePolicy policy) => (ActionResult result);
  };
  
 -// WebUI-facing console surface. It can observe, approve, audit, and cancel, but
@@ -699,7 +699,7 @@ Index: src/chrome/browser/ui/stead/agent_control/agent_control.mojom
 Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc	2026-09-09 00:09:42.421939202 -0700
-+++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc	2026-09-09 04:03:18.884708670 -0700
++++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc	2026-09-09 04:16:16.676497789 -0700
 @@ -5,11 +5,6 @@
  #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
  
@@ -1113,7 +1113,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  std::string CredentialListApprovalScope(int32_t tab_id,
-@@ -437,1390 +128,389 @@
+@@ -437,1390 +128,391 @@
  }
  
  std::string CredentialFillApprovalScope(std::string_view operation,
@@ -1147,6 +1147,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      primary_ref.frame ? primary_ref.frame->tab_id : 0;
 +                                        int32_t tab_id,
 +                                        std::string_view frame_token,
++                                        std::string_view credential_handle,
 +                                        std::string_view marker) {
    return std::string(operation) + "|" + std::to_string(tab_id) + "|" +
 -         digest_hex;
@@ -1155,7 +1156,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -bool CredentialPolicyRequiresConfirmation(
 -    mojom::CredentialUsePolicy policy) {
 -  return policy == mojom::CredentialUsePolicy::kAskForApproval;
-+         std::string(frame_token) + "|" + std::string(marker);
++         std::string(frame_token) + "|" + std::string(credential_handle) +
++         "|" + std::string(marker);
  }
  
 -bool SameProfile(Profile* lhs, Profile* rhs) {
@@ -2182,9 +2184,10 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      return blink::WebMouseEvent::Button::kRight;
 -    default:
 -      return std::nullopt;
--  }
++    broker_->ClearTabDriving(tab_id);
+   }
 -}
--
+ 
 -int MouseButtonDownModifier(blink::WebMouseEvent::Button button) {
 -  switch (button) {
 -    case blink::WebMouseEvent::Button::kLeft:
@@ -2195,10 +2198,13 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      return blink::WebInputEvent::kRightButtonDown;
 -    default:
 -      return blink::WebInputEvent::kNoModifiers;
-+    broker_->ClearTabDriving(tab_id);
++  void ClearTabState(int32_t tab_id) {
++    agent_input_blocks_.erase(tab_id);
++    agent_owned_tabs_.erase(tab_id);
++    agent_owner_sessions_.erase(tab_id);
    }
 -}
--
+ 
 -blink::WebMouseEvent BuildMouseEvent(
 -    blink::WebInputEvent::Type type,
 -    const gfx::Point& point,
@@ -2249,7 +2255,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  return MouseButtonApprovalScope("MouseClick", tab_id, point, button,
 -                                  click_count);
 -}
--
++  void ForgetObservedTab(int32_t tab_id) { observed_tabs_.erase(tab_id); }
+ 
 -std::string MouseDragApprovalScope(int32_t tab_id,
 -                                  const gfx::Point& from,
 -                                  const gfx::Point& to,
@@ -2370,7 +2377,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    event->unmodified_text[0] = key_info.dom_key.ToCharacter();
 -  }
 -}
- 
+-
 -std::string KeyApprovalScope(int32_t tab_id,
 -                             const std::string& key,
 -                             int32_t modifiers) {
@@ -2389,11 +2396,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -std::string SnapshotString(const std::string& value) {
 -  if (value.size() <= kMaxSnapshotStringBytes) {
 -    return value;
-+  void ClearTabState(int32_t tab_id) {
-+    agent_input_blocks_.erase(tab_id);
-+    agent_owned_tabs_.erase(tab_id);
-+    agent_owner_sessions_.erase(tab_id);
-   }
+-  }
 -  std::string truncated;
 -  base::TruncateUTF8ToByteSize(value, kMaxSnapshotStringBytes, &truncated);
 -  return truncated;
@@ -2415,15 +2418,14 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -}
 -
 -}  // namespace
- 
+-
 -struct SteadAgentControlService::FrameSnapshotSource {
 -  raw_ptr<content::RenderFrameHost> frame = nullptr;
 -  raw_ptr<ui::AXTreeManager> manager = nullptr;
 -  raw_ptr<ui::AXTree> tree = nullptr;
 -  std::string frame_token;
 -};
-+  void ForgetObservedTab(int32_t tab_id) { observed_tabs_.erase(tab_id); }
- 
+-
 -struct SteadAgentControlService::SnapshotBuildState {
 -  uint32_t max_nodes = kDefaultMaxSnapshotNodes;
 -  bool include_bounds = true;
@@ -2827,7 +2829,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  
  class SteadAgentControlService::CredentialQuery
      : public password_manager::PasswordStoreConsumer {
-@@ -1835,24 +525,18 @@
+@@ -1835,24 +527,18 @@
          tab_id_(tab_id),
          origin_(origin),
          callback_(std::move(callback)) {}
@@ -2853,7 +2855,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
      if (profile_store_) {
        ++pending_store_count_;
        profile_store_->GetLogins(digest, weak_factory_.GetWeakPtr());
-@@ -1861,9 +545,8 @@
+@@ -1861,9 +547,8 @@
        ++pending_store_count_;
        account_store_->GetLogins(digest, weak_factory_.GetWeakPtr());
      }
@@ -2864,7 +2866,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
      }
    }
  
-@@ -1878,10 +561,9 @@
+@@ -1878,10 +563,9 @@
            std::move(std::get<password_manager::LoginsResult>(
                results_or_error));
        for (password_manager::StoredCredential& credential : results) {
@@ -2876,30 +2878,30 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
      if (--pending_store_count_ == 0) {
        Finish(saw_backend_error_ && credentials_.empty(),
               "Password store query failed.");
-@@ -1889,18 +571,12 @@
+@@ -1889,18 +573,12 @@
    }
  
   private:
 -  void AddCredential(password_manager::PasswordStoreInterface* /*store*/,
 -                     const password_manager::StoredCredential& credential) {
 -    if (credential.blocked_by_user || credential.password_value.empty()) {
--      return;
--    }
--    if (credential.scheme != password_manager::PasswordForm::Scheme::kHtml) {
--      return;
--    }
--    if (credential.signon_realm != origin_.Serialize()) {
 +  void AddCredential(const password_manager::StoredCredential& credential) {
 +    if (credential.blocked_by_user || credential.password_value.empty() ||
 +        credential.scheme != password_manager::PasswordForm::Scheme::kHtml ||
 +        credential.signon_realm != origin_.Serialize()) {
        return;
      }
+-    if (credential.scheme != password_manager::PasswordForm::Scheme::kHtml) {
+-      return;
+-    }
+-    if (credential.signon_realm != origin_.Serialize()) {
+-      return;
+-    }
 -
      CachedCredential cached;
      cached.origin = origin_.Serialize();
      cached.source = "stead_vault";
-@@ -1910,10 +586,7 @@
+@@ -1910,10 +588,7 @@
    }
  
    void Finish(bool backend_error, const std::string& error_message) {
@@ -2911,7 +2913,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
        service_->CompleteCredentialQuery(
            action_id_, tab_id_, std::move(callback_), std::move(credentials_),
            backend_error, error_message);
-@@ -1933,447 +606,9 @@
+@@ -1933,447 +608,9 @@
    base::WeakPtrFactory<CredentialQuery> weak_factory_{this};
  };
  
@@ -3360,7 +3362,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  
  SteadAgentControlService::~SteadAgentControlService() = default;
  
-@@ -2381,32 +616,17 @@
+@@ -2381,32 +618,17 @@
    weak_factory_.InvalidateWeakPtrs();
    receivers_.Clear();
    console_receivers_.Clear();
@@ -3393,7 +3395,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    if (browser_control_) {
      browser_control_->Shutdown();
    }
-@@ -2434,17 +654,102 @@
+@@ -2434,17 +656,102 @@
                            : std::string();
  }
  
@@ -3501,7 +3503,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  void SteadAgentControlService::AddObserver(
-@@ -2459,12 +764,10 @@
+@@ -2459,12 +766,10 @@
    const size_t count = std::min(requested, audit_log_.size());
    std::vector<mojom::AuditEntryPtr> entries;
    entries.reserve(count);
@@ -3514,7 +3516,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    std::move(callback).Run(std::move(entries));
  }
  
-@@ -2474,24 +777,17 @@
+@@ -2474,24 +779,17 @@
    if (request == pending_confirmations_.end()) {
      return;
    }
@@ -3546,7 +3548,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
      while (approval_grants_.size() > kMaxApprovalGrants) {
        approval_grants_.pop_front();
      }
-@@ -2503,11 +799,11 @@
+@@ -2503,11 +801,11 @@
  }
  
  void SteadAgentControlService::Cancel(int32_t tab_id) {
@@ -3561,7 +3563,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    ClearTabDriving(tab_id);
    for (auto& observer : console_observers_) {
      observer->OnCancelled(tab_id);
-@@ -2517,2764 +813,124 @@
+@@ -2517,2764 +815,124 @@
  void SteadAgentControlService::GetActiveTabContext(
      GetActiveTabContextCallback callback) {
    BrowserWindowInterface* browser = chrome::FindLastActiveWithProfile(profile_);
@@ -6407,7 +6409,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  void SteadAgentControlService::CompleteCredentialQuery(
-@@ -5285,7 +941,6 @@
+@@ -5285,7 +943,6 @@
      bool backend_error,
      const std::string& error_message) {
    PurgeExpiredCredentialCache();
@@ -6415,7 +6417,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    std::vector<mojom::CredentialRefPtr> refs;
    mojom::ReadResultPtr result;
    if (backend_error) {
-@@ -5297,949 +952,335 @@
+@@ -5297,949 +954,354 @@
    } else {
      int label_index = 1;
      for (CachedCredential& credential : credentials) {
@@ -6571,6 +6573,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    mojom::NodeRefPtr password_field,
 +    int32_t tab_id,
 +    const std::string& frame_token,
++    const std::string& credential_handle,
 +    const std::string& marker,
      mojom::CredentialUsePolicy policy,
      FillCredentialCallback callback) {
@@ -6590,26 +6593,26 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    };
 -
 -  if (!credential || credential->opaque_handle.empty()) {
--    finish(MakeResult(action_id, false, kTargetMissing,
++  if (credential_handle.empty() || marker.empty() || frame_token.empty()) {
+     finish(MakeResult(action_id, false, kTargetMissing,
 -                      "Credential handle was missing.",
 -                      /*stale=*/false, /*needs_snapshot=*/false,
 -                      /*needs_confirmation=*/false,
 -                      /*target_missing=*/false, "credential"));
--    return;
--  }
++                      "Credential handle, marker, or frame token was missing.",
++                      false, true, "target"));
+     return;
+   }
 -
 -  if (!username_field || !username_field->frame || !password_field ||
 -      !password_field->frame) {
-+  if (marker.empty() || frame_token.empty()) {
-     finish(MakeResult(action_id, false, kTargetMissing,
+-    finish(MakeResult(action_id, false, kTargetMissing,
 -                      "Credential target refs were missing.",
 -                      /*stale=*/false, /*needs_snapshot=*/false,
 -                      /*needs_confirmation=*/false,
 -                      /*target_missing=*/true, "target"));
-+                      "Credential marker or frame token was missing.", false,
-+                      true, "target"));
-     return;
-   }
+-    return;
+-  }
 -
 -  if (username_field->frame->tab_id != password_field->frame->tab_id ||
 -      username_field->frame->frame_token !=
@@ -6629,8 +6632,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      CredentialPolicyRequiresConfirmation(policy));
 +  mojom::ActionResultPtr gate = MaybeGateCredential(
 +      action_id, tab_id, operation,
-+      CredentialFillApprovalScope(operation, tab_id, frame_token, marker),
-+      policy);
++      CredentialFillApprovalScope(operation, tab_id, frame_token,
++                                  credential_handle, marker), policy);
    if (gate) {
      finish(std::move(gate));
      return;
@@ -6645,7 +6648,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 +                      "target"));
 +    return;
 +  }
-+  const CachedCredential* cached = FindCachedCredential(marker);
++  const CachedCredential* cached = FindCachedCredential(credential_handle);
    if (!cached) {
      finish(MakeResult(action_id, false, kCredentialMissing,
 -                      "Credential handle was missing or expired.",
@@ -6707,7 +6710,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 +                      false, false, "credential"));
      return;
    }
-+  credential_cache_.erase(marker);
++  credential_cache_.erase(credential_handle);
 +  frame->ExecuteJavaScriptInIsolatedWorld(
 +      BuildCredentialFillScript(marker, username, password),
 +      base::BindOnce(&SteadAgentControlService::CompleteCredentialFill,
@@ -6756,6 +6759,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    mojom::NodeRefPtr field,
 +    int32_t tab_id,
 +    const std::string& frame_token,
++    const std::string& credential_handle,
 +    const std::string& marker,
      mojom::CredentialUsePolicy policy,
      FillTotpCallback callback) {
@@ -6765,7 +6769,13 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    const std::string operation = "FillTotp";
 -  auto finish = [&](mojom::ActionResultPtr result) {
 -    RecordAudit(*result, tab_id, action_class, operation);
--    std::move(callback).Run(std::move(result));
++  if (credential_handle.empty() || marker.empty() || frame_token.empty()) {
++    auto result = MakeResult(
++        action_id, false, kTargetMissing,
++        "Credential handle, marker, or frame token was missing.", false, true,
++        "target");
++    RecordAudit(*result, tab_id, mojom::ActionClass::kCredential, operation);
+     std::move(callback).Run(std::move(result));
 -  };
 -
 -  if (!credential || credential->opaque_handle.empty()) {
@@ -6783,8 +6793,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -                      /*stale=*/false, /*needs_snapshot=*/false,
 -                      /*needs_confirmation=*/false,
 -                      /*target_missing=*/true, "target"));
--    return;
--  }
+     return;
+   }
 -
 -  mojom::ActionResultPtr gate = MaybeGateAction(
 -      action_id, tab_id, action_class, operation,
@@ -6793,8 +6803,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      CredentialPolicyRequiresConfirmation(policy));
 +  mojom::ActionResultPtr gate = MaybeGateCredential(
 +      action_id, tab_id, operation,
-+      CredentialFillApprovalScope(operation, tab_id, frame_token, marker),
-+      policy);
++      CredentialFillApprovalScope(operation, tab_id, frame_token,
++                                  credential_handle, marker), policy);
    if (gate) {
 -    finish(std::move(gate));
 +    RecordAudit(*gate, tab_id, mojom::ActionClass::kCredential, operation);
@@ -6862,8 +6872,14 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    content::WebContents* web_contents,
 -    int32_t tab_id) {
 -  if (!web_contents || scoped_ax_modes_.contains(tab_id)) {
--    return;
--  }
++  if (!FindCachedCredential(credential_handle)) {
++    auto result = MakeResult(action_id, false, kCredentialMissing,
++                             "Credential handle was missing or expired.",
++                             false, false, "credential");
++    RecordAudit(*result, tab_id, mojom::ActionClass::kCredential, operation);
++    std::move(callback).Run(std::move(result));
+     return;
+   }
 -
 -  scoped_ax_modes_[tab_id] =
 -      content::BrowserAccessibilityState::GetInstance()
@@ -7589,7 +7605,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  void SteadAgentControlService::MarkTabDriving(int32_t tab_id) {
-@@ -6250,9 +1291,7 @@
+@@ -6250,9 +1312,7 @@
        observer->OnDrivingStateChanged(tab_id, true);
      }
    }
@@ -7600,7 +7616,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
        FROM_HERE,
        base::BindOnce(&SteadAgentControlService::CheckDrivingIdle,
-@@ -6262,16 +1301,13 @@
+@@ -6262,16 +1322,13 @@
  
  void SteadAgentControlService::CheckDrivingIdle(int32_t tab_id) {
    const auto last = last_drive_action_by_tab_.find(tab_id);
@@ -7619,7 +7635,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  void SteadAgentControlService::ClearTabDriving(int32_t tab_id) {
-@@ -6281,69 +1317,38 @@
+@@ -6281,69 +1338,38 @@
    for (auto& observer : console_observers_) {
      observer->OnDrivingStateChanged(tab_id, false);
    }
@@ -7702,7 +7718,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
          IsFrameTainted(tab_id, key.substr(prefix.size()))) {
        return true;
      }
-@@ -6352,601 +1357,90 @@
+@@ -6352,601 +1378,90 @@
  }
  
  void SteadAgentControlService::MarkFrameTainted(
@@ -8348,7 +8364,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  int32_t SteadAgentControlService::NextActionId() {
-@@ -6963,15 +1457,12 @@
+@@ -6963,15 +1478,12 @@
      bool ok,
      const std::string& code,
      const std::string& message,
@@ -8371,7 +8387,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h	2026-09-09 00:09:21.451893063 -0700
-+++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h	2026-09-09 04:03:06.435619798 -0700
++++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h	2026-09-09 04:15:54.376706384 -0700
 @@ -18,60 +18,33 @@
  #include "base/memory/raw_ptr.h"
  #include "base/memory/weak_ptr.h"
@@ -8438,7 +8454,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
   public:
    explicit SteadAgentControlService(Profile* profile);
    SteadAgentControlService(const SteadAgentControlService&) = delete;
-@@ -85,107 +58,35 @@
+@@ -85,107 +58,37 @@
  
    bool IsAgentOwnedTabForUi(int32_t tab_id) const;
    std::string AgentOwnerSessionForUi(int32_t tab_id) const;
@@ -8539,6 +8555,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
 -                      mojom::NodeRefPtr password_field,
 +  void FillCredential(int32_t tab_id,
 +                      const std::string& frame_token,
++                      const std::string& credential_handle,
 +                      const std::string& marker,
                        mojom::CredentialUsePolicy policy,
                        FillCredentialCallback callback) override;
@@ -8546,6 +8563,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
 -                mojom::NodeRefPtr field,
 +  void FillTotp(int32_t tab_id,
 +                const std::string& frame_token,
++                const std::string& credential_handle,
 +                const std::string& marker,
                  mojom::CredentialUsePolicy policy,
                  FillTotpCallback callback) override;
@@ -8564,7 +8582,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
  
    // mojom::ControlConsole:
    void AddObserver(mojo::PendingRemote<mojom::ConsoleObserver> observer)
-@@ -199,26 +100,8 @@
+@@ -199,26 +102,8 @@
   private:
    class PrivateBrowserControl;
    class ObservedTab;
@@ -8592,7 +8610,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
    struct CachedCredential {
      std::string origin;
      std::string source;
-@@ -227,206 +110,117 @@
+@@ -227,206 +112,117 @@
      base::TimeTicks created_at;
    };
  
@@ -9518,7 +9536,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
 Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/brain/stead_brain_service.cc	2026-09-09 00:36:31.949141446 -0700
-+++ src/chrome/browser/ui/stead/brain/stead_brain_service.cc	2026-09-09 04:03:06.435022126 -0700
++++ src/chrome/browser/ui/stead/brain/stead_brain_service.cc	2026-09-09 04:15:54.378139049 -0700
 @@ -13,7 +13,6 @@
  #include <utility>
  #include <vector>
@@ -10459,7 +10477,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
                 mojom::ReadResultPtr result,
                 std::vector<mojom::CredentialRefPtr> credentials) {
                if (!service) {
-@@ -1502,63 +746,49 @@
+@@ -1502,63 +746,50 @@
                    list.Append(CredentialRefToDict(*credential));
                  }
                }
@@ -10510,13 +10528,14 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
 +      tool_name == "browser.fill_totp") {
 +    const std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
 +    const std::string* frame_token = arguments.FindString("frame_token");
++    const std::string* credential = arguments.FindString("credential");
 +    const std::string* marker = arguments.FindString("marker");
-+    if (!tab_id || !frame_token || frame_token->empty() || !marker ||
-+        marker->empty()) {
++    if (!tab_id || !frame_token || frame_token->empty() || !credential ||
++        credential->empty() || !marker || marker->empty()) {
 +      SendToolError(
 +          session_id, tool_call_id,
 +          tool_name +
-+              " requires integer tab_id, frame_token, and marker.");
++              " requires integer tab_id, frame_token, credential, and marker.");
        return;
      }
 -    control->FillCredential(
@@ -10541,11 +10560,11 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
 +    auto callback = base::BindOnce(action_done, weak_factory_.GetWeakPtr(),
 +                                   session_id, tool_call_id);
 +    if (tool_name == "browser.fill_credential") {
-+      control->FillCredential(*tab_id, *frame_token, *marker,
++      control->FillCredential(*tab_id, *frame_token, *credential, *marker,
 +                              CredentialUsePolicyForSession(session_id),
 +                              std::move(callback));
 +    } else {
-+      control->FillTotp(*tab_id, *frame_token, *marker,
++      control->FillTotp(*tab_id, *frame_token, *credential, *marker,
 +                        CredentialUsePolicyForSession(session_id),
 +                        std::move(callback));
      }
