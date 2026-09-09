@@ -65,3 +65,4 @@ stead/branding/rebrand-internal-scheme-and-chat-omnibox.patch
 stead/branding/rebrand-settings-copy.patch
 stead/agent-control/observable-state-and-eval.patch
 stead/brain/brain-cdp-bridge.patch
+stead/agent-control/steadwright-native-cleanup.patch
