@@ -1,0 +1,429 @@
+--- a/chrome/browser/ui/stead/agent_control/agent_control.mojom
++++ b/chrome/browser/ui/stead/agent_control/agent_control.mojom
+@@ -13,8 +13,10 @@
+ //
+ // The implementation backs frame_token with a RenderFrameHost AXTreeID string
+ // and resolves it back through RenderFrameHost::FromAXTreeID for action/probe
+-// routing. Main-frame snapshots are the initial path; the contract already
+-// carries the wider OOPIF shape without changing NodeRef.
++// routing. Snapshots span every frame in the tab: GetSnapshot collects one
++// FrameSnapshotSource per RenderFrameHost and BuildAxNode crosses AX tree
++// boundaries, so a node inside a nested OOPIF appears in the same tree and
++// carries the FrameRef that routes actions back to its own frame.
+ struct FrameRef {
+   int32 tab_id;
+   string frame_token;
+@@ -114,6 +116,31 @@
+   bool likely_authenticated;
+ };
+ 
++// One completed network exchange, observed through ResourceLoadComplete.
++//
++// Chromium's WebContentsObserver surface reports resource loads when they
++// finish, not when they start, so a record always describes a completed
++// exchange and carries both request and response fields. Request-shaped waits
++// resolve from the same records; they are not dispatch-time notifications.
++//
++// Redaction stance matches TabInfo: URL, method, and status only — no request
++// or response bodies, no headers, no cookies.
++struct NetworkRecord {
++  int32 event_id;
++  int32 tab_id;
++  string url;
++  string method;
++  // Lowercase request destination, e.g. "xhr", "document", "script".
++  string resource_type;
++  // HTTP status, or 0 when the load failed before a response.
++  int32 status;
++  // True when the load completed with no net error and a non-error status.
++  bool ok;
++  int32 net_error;
++  bool was_cached;
++  int64 timestamp_us;
++};
++
+ // Coarse context for a surface's bound "current tab" chip. Same redaction
+ // stance as TabInfo: URL/title only, no cookies or account metadata.
+ struct TabContextInfo {
+@@ -366,6 +393,31 @@
+   FillTotp(CredentialRef credential, NodeRef field, CredentialUsePolicy policy)
+       => (ActionResult result);
+   MarkCredentialInjection(FrameRef frame) => (ActionResult result);
++
++  // Arm the next file chooser on a tab to answer itself with these paths.
++  //
++  // Stead has no way to write an <input type=file> value directly — the
++  // renderer owns it, and forging one would bypass the same-origin and
++  // user-activation rules the element exists to enforce. So an agent upload is
++  // the real thing: arm the selection, activate the input, and let Chromium's
++  // own FileSelectHelper deliver the files. An empty array cancels instead.
++  //
++  // The arming is single-shot and tab-scoped: it is consumed by the first
++  // chooser that opens, so a page that opens its own chooser later still
++  // reaches the user. Callers must re-arm for each upload.
++  SetPendingFileSelection(int32 tab_id, array<string> paths)
++      => (ActionResult result);
++
++  // Monotonic id of the newest network record currently buffered for a tab.
++  // Callers capture this before triggering an action so a response that lands
++  // while the action is still settling cannot be missed.
++  GetNetworkCursor(int32 tab_id) => (int32 cursor);
++
++  // Network records with event_id greater than after_event_id, oldest first.
++  // The buffer is bounded per tab; cursor is the newest id currently held, so
++  // a caller that falls behind can detect the gap rather than silently skip.
++  GetNetworkLog(int32 tab_id, int32 after_event_id)
++      => (array<NetworkRecord> records, int32 cursor);
+ };
+ 
+ // WebUI-facing console surface. It can observe, approve, audit, and cancel, but
+--- a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
+@@ -41,6 +41,7 @@
+ 
+ namespace blink::mojom {
+ class FileChooserParams;
++class ResourceLoadInfo;
+ }  // namespace blink::mojom
+ 
+ namespace gfx {
+@@ -176,6 +177,15 @@
+   void MarkCredentialInjection(mojom::FrameRefPtr frame,
+                                MarkCredentialInjectionCallback callback)
+       override;
++  void SetPendingFileSelection(
++      int32_t tab_id,
++      const std::vector<std::string>& paths,
++      SetPendingFileSelectionCallback callback) override;
++  void GetNetworkCursor(int32_t tab_id,
++                        GetNetworkCursorCallback callback) override;
++  void GetNetworkLog(int32_t tab_id,
++                     int32_t after_event_id,
++                     GetNetworkLogCallback callback) override;
+ 
+   // mojom::ControlConsole:
+   void AddObserver(mojo::PendingRemote<mojom::ConsoleObserver> observer)
+@@ -269,6 +279,9 @@
+   void ClearPendingConfirmationsForTab(int32_t tab_id);
+   void OnNavigationCommitted(int32_t tab_id,
+                              content::NavigationHandle* navigation_handle);
++  void OnResourceLoadComplete(
++      int32_t tab_id,
++      const blink::mojom::ResourceLoadInfo& resource_load_info);
+   void OnRenderFrameDeleted(int32_t tab_id,
+                             content::RenderFrameHost* render_frame_host);
+   void OnPopupOpened(int32_t opener_tab_id,
+@@ -405,6 +418,14 @@
+   int32_t next_dialog_id_ = 1;
+   int32_t next_file_chooser_id_ = 1;
+   int32_t next_event_id_ = 1;
++  int32_t next_network_event_id_ = 1;
++  // Single-shot, tab-scoped upload arming consumed by the next file chooser.
++  base::flat_map<int32_t, std::vector<base::FilePath>> pending_file_selections_;
++  // Bounded per-tab ring of completed network exchanges. Kept small: it exists
++  // so a wait registered before an action can see what the action caused, not
++  // to be a session-long HAR. Oldest records drop first.
++  static constexpr size_t kMaxNetworkRecordsPerTab = 256;
++  base::flat_map<int32_t, std::deque<mojom::NetworkRecordPtr>> network_log_;
+   uint64_t next_event_sequence_ = 1;
+   uint64_t next_audit_sequence_ = 1;
+   base::WeakPtrFactory<SteadAgentControlService> weak_factory_{this};
+--- a/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
++++ b/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
+@@ -84,6 +84,11 @@
+ #include "net/cookies/cookie_options.h"
+ #include "net/cookies/cookie_partition_key_collection.h"
+ #include "services/network/public/mojom/cookie_manager.mojom.h"
++#include "services/network/public/cpp/request_destination.h"
++#include "content/public/browser/global_request_id.h"
++#include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
++#include "net/base/net_errors.h"
++#include "base/strings/string_util.h"
+ #include "third_party/skia/include/core/SkBitmap.h"
+ #include "third_party/blink/public/common/input/web_mouse_event.h"
+ #include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
+@@ -2119,6 +2124,17 @@
+     owner_->OnNavigationCommitted(tab_id_, navigation_handle);
+   }
+ 
++  void ResourceLoadComplete(
++      content::RenderFrameHost* render_frame_host,
++      const content::GlobalRequestID& request_id,
++      const blink::mojom::ResourceLoadInfo& resource_load_info) override {
++    if (!owner_) {
++      return;
++    }
++
++    owner_->OnResourceLoadComplete(tab_id_, resource_load_info);
++  }
++
+   void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override {
+     if (!owner_) {
+       return;
+@@ -5134,6 +5150,124 @@
+                     /*blocked_by=*/std::string(), current_generation));
+ }
+ 
++void SteadAgentControlService::SetPendingFileSelection(
++    int32_t tab_id,
++    const std::vector<std::string>& paths,
++    SetPendingFileSelectionCallback callback) {
++  const int32_t action_id = NextActionId();
++  const mojom::ActionClass action_class = mojom::ActionClass::kNavigation;
++  const std::string operation = "SetPendingFileSelection";
++  auto finish = [&](mojom::ActionResultPtr result) {
++    RecordAudit(*result, tab_id, action_class, operation);
++    std::move(callback).Run(std::move(result));
++  };
++
++  const TabEventState event_state = browser_control_->GetTabEventState(tab_id);
++  if (!event_state.found) {
++    finish(MakeResult(action_id, false, kTabMissing, "Tab was not found.",
++                      /*stale=*/false, /*needs_snapshot=*/false,
++                      /*needs_confirmation=*/false,
++                      /*target_missing=*/true));
++    return;
++  }
++
++  std::vector<base::FilePath> file_paths;
++  file_paths.reserve(paths.size());
++  for (const std::string& path : paths) {
++    base::FilePath file_path = base::FilePath::FromUTF8Unsafe(path);
++    // Only absolute, non-traversing paths. A relative or "..'-bearing path
++    // reaching Chromium would resolve against the browser's cwd, which is not
++    // anything the agent's session scope covers.
++    if (!file_path.IsAbsolute() || file_path.ReferencesParent()) {
++      finish(MakeResult(action_id, false, kFileChooserInvalidSelection,
++                        "Upload paths must be absolute and must not traverse.",
++                        /*stale=*/false, /*needs_snapshot=*/false,
++                        /*needs_confirmation=*/false,
++                        /*target_missing=*/false));
++      return;
++    }
++    file_paths.push_back(std::move(file_path));
++  }
++
++  pending_file_selections_[tab_id] = std::move(file_paths);
++  finish(MakeResult(action_id, true, kFileChooserHandled,
++                    paths.empty()
++                        ? "Next file chooser on this tab will be cancelled."
++                        : "Next file chooser on this tab will receive the "
++                          "armed selection.",
++                    /*stale=*/false, /*needs_snapshot=*/false,
++                    /*needs_confirmation=*/false,
++                    /*target_missing=*/false));
++}
++
++void SteadAgentControlService::OnResourceLoadComplete(
++    int32_t tab_id,
++    const blink::mojom::ResourceLoadInfo& resource_load_info) {
++  if (tab_id <= 0) {
++    return;
++  }
++
++  auto record = mojom::NetworkRecord::New();
++  record->event_id = next_network_event_id_++;
++  record->tab_id = tab_id;
++  // SnapshotString is the same redaction the rest of the surface uses; the URL
++  // is the only page-controlled string that reaches the model here.
++  record->url = SnapshotString(resource_load_info.final_url.spec());
++  record->method = SnapshotString(resource_load_info.method);
++  record->resource_type = base::ToLowerASCII(network::RequestDestinationToString(
++      resource_load_info.request_destination,
++      network::EmptyRequestDestinationOption::kUseFiveCharEmptyString));
++  record->status = resource_load_info.http_status_code;
++  record->net_error = resource_load_info.net_error;
++  record->was_cached = resource_load_info.was_cached;
++  // "ok" mirrors fetch(): a transport-level success with a non-error status.
++  // A status of 0 happens for loads that never produced an HTTP response
++  // (data: URLs, cache hits without a status) and is not treated as failure
++  // when the net error is also clear.
++  record->ok = resource_load_info.net_error == net::OK &&
++               (resource_load_info.http_status_code == 0 ||
++                resource_load_info.http_status_code < 400);
++  record->timestamp_us =
++      base::TimeTicks::Now().since_origin().InMicroseconds();
++
++  std::deque<mojom::NetworkRecordPtr>& tab_log = network_log_[tab_id];
++  tab_log.push_back(std::move(record));
++  while (tab_log.size() > kMaxNetworkRecordsPerTab) {
++    tab_log.pop_front();
++  }
++}
++
++void SteadAgentControlService::GetNetworkCursor(
++    int32_t tab_id,
++    GetNetworkCursorCallback callback) {
++  const auto entry = network_log_.find(tab_id);
++  // An empty log reports the id the next record will take minus one, so a
++  // caller that registers before any traffic still sees everything that
++  // follows rather than replaying another tab's history.
++  int32_t cursor = next_network_event_id_ - 1;
++  if (entry != network_log_.end() && !entry->second.empty()) {
++    cursor = entry->second.back()->event_id;
++  }
++  std::move(callback).Run(cursor);
++}
++
++void SteadAgentControlService::GetNetworkLog(int32_t tab_id,
++                                             int32_t after_event_id,
++                                             GetNetworkLogCallback callback) {
++  std::vector<mojom::NetworkRecordPtr> records;
++  int32_t cursor = next_network_event_id_ - 1;
++  const auto entry = network_log_.find(tab_id);
++  if (entry != network_log_.end()) {
++    for (const mojom::NetworkRecordPtr& record : entry->second) {
++      cursor = std::max(cursor, record->event_id);
++      if (record->event_id > after_event_id) {
++        records.push_back(record->Clone());
++      }
++    }
++  }
++  std::move(callback).Run(std::move(records), cursor);
++}
++
+ void SteadAgentControlService::CompleteCredentialQuery(
+     int32_t action_id,
+     int32_t tab_id,
+@@ -5997,6 +6131,26 @@
+       render_frame_host ? render_frame_host->GetAXTreeID().ToString()
+                         : std::string();
+ 
++  // An armed selection answers this chooser directly. It is consumed whether
++  // or not the helper accepts it, so a rejected selection cannot silently
++  // capture a later chooser the user opened themselves.
++  const auto pending = pending_file_selections_.find(tab_id);
++  if (pending != pending_file_selections_.end()) {
++    const std::vector<base::FilePath> paths = std::move(pending->second);
++    pending_file_selections_.erase(pending);
++    const bool handled = paths.empty()
++                             ? helper->CancelFileSelectionForSteadAgent()
++                             : helper->SelectFilesForSteadAgent(paths);
++    // Still emit an event: an agent-driven upload has to be as visible in the
++    // audit trail as one the model answered by hand.
++    EmitFileChooserEvent(
++        tab_id, frame_token,
++        BuildFileChooserInfo(handle,
++                             handled ? "agent_selected" : "agent_rejected",
++                             params));
++    return;
++  }
++
+   ActiveFileChooserState state;
+   state.tab_id = tab_id;
+   state.helper = helper;
+--- a/chrome/browser/ui/stead/agent_control/BUILD.gn
++++ b/chrome/browser/ui/stead/agent_control/BUILD.gn
+@@ -48,7 +48,9 @@
+     "//mojo/public/cpp/base",
+     "//mojo/public/cpp/bindings",
+     "//net",
++    "//services/network/public/cpp",
+     "//services/network/public/mojom",
++    "//third_party/blink/public/mojom:mojom_platform",
+     "//skia",
+     "//ui/accessibility",
+     "//ui/events",
+--- a/chrome/browser/ui/stead/brain/stead_brain_service.cc
++++ b/chrome/browser/ui/stead/brain/stead_brain_service.cc
+@@ -913,6 +913,100 @@
+                             /*tainted=*/false);
+   };
+ 
++  if (tool_name == "browser.set_input_files") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    if (!tab_id) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.set_input_files requires integer tab_id.");
++      return;
++    }
++    std::vector<std::string> paths;
++    const base::ListValue* path_list = arguments.FindList("paths");
++    if (path_list) {
++      for (const base::Value& path : *path_list) {
++        if (path.is_string()) {
++          paths.push_back(path.GetString());
++        }
++      }
++    }
++    control->SetPendingFileSelection(
++        *tab_id, paths,
++        base::BindOnce(action_done, weak_factory_.GetWeakPtr(), session_id,
++                       tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.network_cursor") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    if (!tab_id) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.network_cursor requires integer tab_id.");
++      return;
++    }
++    control->GetNetworkCursor(
++        *tab_id,
++        base::BindOnce(
++            [](base::WeakPtr<SteadBrainService> service, std::string session_id,
++               std::string tool_call_id, int32_t cursor) {
++              if (!service) {
++                return;
++              }
++              base::DictValue content;
++              content.Set("cursor", cursor);
++              service->SendToolResult(session_id, tool_call_id, true,
++                                      std::move(content), std::nullopt,
++                                      /*tainted=*/false);
++            },
++            weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
++  if (tool_name == "browser.network_log") {
++    std::optional<int32_t> tab_id = FindInt32(arguments, "tab_id");
++    if (!tab_id) {
++      SendToolError(session_id, tool_call_id,
++                    "browser.network_log requires integer tab_id.");
++      return;
++    }
++    const int32_t after_event_id =
++        FindInt32(arguments, "after_event_id").value_or(-1);
++    control->GetNetworkLog(
++        *tab_id, after_event_id,
++        base::BindOnce(
++            [](base::WeakPtr<SteadBrainService> service, std::string session_id,
++               std::string tool_call_id,
++               std::vector<mojom::NetworkRecordPtr> records, int32_t cursor) {
++              if (!service) {
++                return;
++              }
++              base::ListValue list;
++              for (const mojom::NetworkRecordPtr& record : records) {
++                if (!record) {
++                  continue;
++                }
++                base::DictValue entry;
++                entry.Set("event_id", record->event_id);
++                entry.Set("tab_id", record->tab_id);
++                entry.Set("url", record->url);
++                entry.Set("method", record->method);
++                entry.Set("resource_type", record->resource_type);
++                entry.Set("status", record->status);
++                entry.Set("ok", record->ok);
++                entry.Set("net_error", record->net_error);
++                entry.Set("was_cached", record->was_cached);
++                list.Append(std::move(entry));
++              }
++              base::DictValue content;
++              content.Set("records", std::move(list));
++              content.Set("cursor", cursor);
++              service->SendToolResult(session_id, tool_call_id, true,
++                                      std::move(content), std::nullopt,
++                                      /*tainted=*/false);
++            },
++            weak_factory_.GetWeakPtr(), session_id, tool_call_id));
++    return;
++  }
++
+   if (tool_name == "browser.list_tabs") {
+     control->ListTabs(base::BindOnce(
+         [](base::WeakPtr<SteadBrainService> service, std::string session_id,
