@@ -229,7 +229,7 @@ Index: src/chrome/browser/file_select_helper.h
 Index: src/chrome/browser/ui/stead/agent_control/BUILD.gn
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/agent_control/BUILD.gn	2026-09-09 00:09:21.453383900 -0700
-+++ src/chrome/browser/ui/stead/agent_control/BUILD.gn	2026-09-09 03:52:18.650143723 -0700
++++ src/chrome/browser/ui/stead/agent_control/BUILD.gn	2026-09-09 20:53:24.275008708 -0700
 @@ -8,12 +8,6 @@
    sources = [ "agent_control.mojom" ]
    webui_module_path = "/"
@@ -243,9 +243,11 @@ Index: src/chrome/browser/ui/stead/agent_control/BUILD.gn
  }
  
  source_set("agent_control") {
-@@ -31,33 +25,15 @@
+@@ -30,34 +24,17 @@
+     "//chrome/browser/password_manager",
      "//chrome/browser/profiles:profile",
      "//chrome/browser/ui/browser_window",
++    "//chrome/browser/ui/stead/brain:mojo_bindings",
      "//chrome/browser/ui/tabs:tab_strip",
 -    "//components/download/public/common:public",
 -    "//components/input",
@@ -699,7 +701,7 @@ Index: src/chrome/browser/ui/stead/agent_control/agent_control.mojom
 Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc	2026-09-09 00:09:42.421939202 -0700
-+++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc	2026-09-09 04:36:22.506814054 -0700
++++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc	2026-09-09 21:02:06.347469859 -0700
 @@ -5,11 +5,6 @@
  #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
  
@@ -753,7 +755,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  #include "components/password_manager/core/browser/password_form.h"
  #include "components/password_manager/core/browser/password_form_digest.h"
  #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
-@@ -62,179 +39,42 @@
+@@ -62,179 +39,43 @@
  #include "components/tab_groups/tab_group_color.h"
  #include "components/tab_groups/tab_group_visual_data.h"
  #include "components/tabs/public/tab_group.h"
@@ -905,6 +907,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 +constexpr size_t kMaxCachedCredentials = 128;
 +constexpr size_t kMaxFillValueBytes = 64 * 1024;
  constexpr base::TimeDelta kApprovalGrantTtl = base::Seconds(60);
++constexpr base::TimeDelta kConfirmationTtl = base::Seconds(60);
  constexpr base::TimeDelta kCredentialCacheTtl = base::Minutes(5);
 -constexpr int kMaxScreenshotDimension = 1600;
 -constexpr int kMaxScrollDelta = 10000;
@@ -941,7 +944,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    const overlay = document.createElement('div');
    overlay.id = id;
    overlay.setAttribute('style',
-@@ -269,165 +109,16 @@
+@@ -269,165 +110,16 @@
  
  constexpr char kDriveOverlayHideScript[] = R"js((() => {
    const overlay = document.getElementById('__stead_drive_overlay__');
@@ -1113,7 +1116,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  std::string CredentialListApprovalScope(int32_t tab_id,
-@@ -437,1390 +128,383 @@
+@@ -437,1390 +129,383 @@
  }
  
  std::string CredentialFillApprovalScope(std::string_view operation,
@@ -1156,8 +1159,10 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -bool CredentialPolicyRequiresConfirmation(
 -    mojom::CredentialUsePolicy policy) {
 -  return policy == mojom::CredentialUsePolicy::kAskForApproval;
--}
--
++         std::string(frame_token) + "|" + std::string(credential_handle) +
++         "|" + std::string(marker);
+ }
+ 
 -bool SameProfile(Profile* lhs, Profile* rhs) {
 -  if (!lhs || !rhs) {
 -    return false;
@@ -1170,10 +1175,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    return std::string();
 -  }
 -  return base::UTF16ToUTF8(web_contents->GetTitle());
-+         std::string(frame_token) + "|" + std::string(credential_handle) +
-+         "|" + std::string(marker);
- }
- 
+-}
+-
 -std::string WebContentsUrl(content::WebContents* web_contents) {
 -  if (!web_contents) {
 -    return std::string();
@@ -1533,10 +1536,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      {top_left.y(), top_right.y(), bottom_left.y(), bottom_right.y()});
 -  if (max_x <= min_x || max_y <= min_y) {
 -    return std::nullopt;
-+  bool IsAgentOwnedTab(int32_t tab_id) const {
-+    return agent_owned_tabs_.contains(tab_id);
-   }
- 
+-  }
+-
 -  return gfx::ToEnclosingRect(
 -      gfx::RectF(min_x, min_y, max_x - min_x, max_y - min_y));
 -}
@@ -1560,10 +1561,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      return "unknown";
 -    default:
 -      return "unknown";
-+  std::string AgentOwnerSession(int32_t tab_id) const {
-+    const auto owner = agent_owner_sessions_.find(tab_id);
-+    return owner == agent_owner_sessions_.end() ? std::string()
-+                                                : owner->second;
++  bool IsAgentOwnedTab(int32_t tab_id) const {
++    return agent_owned_tabs_.contains(tab_id);
    }
 -}
  
@@ -1827,15 +1826,15 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  for (const auto& request : requests) {
 -    if (!request) {
 -      continue;
-+  void MarkAgentOwnedTab(int32_t tab_id, const std::string& owner_session_id) {
-+    content::WebContents* contents = FindTabById(tab_id);
-+    if (!contents) {
-+      return;
-     }
+-    }
 -    info->request_types.push_back(
 -        permissions::PermissionKeyForRequestType(request->request_type()));
--  }
--
++  std::string AgentOwnerSession(int32_t tab_id) const {
++    const auto owner = agent_owner_sessions_.find(tab_id);
++    return owner == agent_owner_sessions_.end() ? std::string()
++                                                : owner->second;
+   }
+ 
 -  return info;
 -}
 -
@@ -1855,23 +1854,27 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  for (const std::string& request_type : info.request_types) {
 -    if (!summary.empty()) {
 -      summary.append(",");
-+    agent_owned_tabs_.insert(tab_id);
-+    agent_owner_sessions_[tab_id] = owner_session_id;
-+    if (!agent_input_blocks_.contains(tab_id)) {
-+      agent_input_blocks_.insert_or_assign(
-+          tab_id, contents->IgnoreInputEvents(std::nullopt));
++  void MarkAgentOwnedTab(int32_t tab_id, const std::string& owner_session_id) {
++    content::WebContents* contents = FindTabById(tab_id);
++    if (!contents) {
++      return;
      }
 -    summary.append(request_type);
 -  }
 -  if (!info.decision.empty()) {
 -    if (!summary.empty()) {
 -      summary.append(":");
--    }
++    agent_owned_tabs_.insert(tab_id);
++    agent_owner_sessions_[tab_id] = owner_session_id;
++    if (!agent_input_blocks_.contains(tab_id)) {
++      agent_input_blocks_.insert_or_assign(
++          tab_id, contents->IgnoreInputEvents(std::nullopt));
+     }
 -    summary.append(info.decision);
 -  }
 -  return summary;
 -}
--
+ 
 -std::string DictString(const base::DictValue& dict, std::string_view key) {
 -  const std::string* value = dict.FindString(key);
 -  return value ? *value : std::string();
@@ -1882,7 +1885,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -              bool fallback = false) {
 -  return dict.FindBool(key).value_or(fallback);
 -}
- 
+-
 -double DictDouble(const base::DictValue& dict,
 -                  std::string_view key,
 -                  double fallback = 0.0) {
@@ -1940,17 +1943,17 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 +      tab_strip->ActivateTabAt(index);
 +      break;
      }
--  }
++    broker_->MarkTabDriving(tab_id);
+   }
 -  return values;
 -}
--
+ 
 -mojom::NodeProbePtr BuildNodeProbeFromValue(const base::Value& value) {
 -  const base::DictValue* dict = value.GetIfDict();
 -  if (!dict) {
 -    return nullptr;
-+    broker_->MarkTabDriving(tab_id);
-   }
- 
+-  }
+-
 -  auto probe = mojom::NodeProbe::New();
 -  probe->found = DictBool(*dict, "found");
 -  probe->target_matched = DictBool(*dict, "target_matched");
@@ -2188,8 +2191,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      return blink::WebInputEvent::kRightButtonDown;
 -    default:
 -      return blink::WebInputEvent::kNoModifiers;
-+    broker_->ClearTabDriving(tab_id);
-   }
+-  }
 -}
 -
 -blink::WebMouseEvent BuildMouseEvent(
@@ -2333,15 +2335,20 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -
 -  if (key.size() != 1 || static_cast<unsigned char>(key[0]) > 0x7F) {
 -    return std::nullopt;
--  }
--
++    broker_->ClearTabDriving(tab_id);
+   }
+ 
 -  const char16_t character = static_cast<unsigned char>(key[0]);
 -  const ui::DomKey dom_key = ui::DomKey::FromCharacter(character);
 -  const ui::DomCode dom_code = ui::UsLayoutDomKeyToDomCode(dom_key);
 -  if (dom_code == ui::DomCode::NONE) {
 -    return std::nullopt;
--  }
--
++  void ClearTabState(int32_t tab_id) {
++    agent_input_blocks_.erase(tab_id);
++    agent_owned_tabs_.erase(tab_id);
++    agent_owner_sessions_.erase(tab_id);
+   }
+ 
 -  return MakeKeyInfo(dom_key, dom_code,
 -                     ui::DomCodeToUsLayoutKeyboardCode(dom_code),
 -                     /*send_char=*/true);
@@ -2363,7 +2370,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    event->unmodified_text[0] = key_info.dom_key.ToCharacter();
 -  }
 -}
- 
+-
 -std::string KeyApprovalScope(int32_t tab_id,
 -                             const std::string& key,
 -                             int32_t modifiers) {
@@ -2382,11 +2389,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -std::string SnapshotString(const std::string& value) {
 -  if (value.size() <= kMaxSnapshotStringBytes) {
 -    return value;
-+  void ClearTabState(int32_t tab_id) {
-+    agent_input_blocks_.erase(tab_id);
-+    agent_owned_tabs_.erase(tab_id);
-+    agent_owner_sessions_.erase(tab_id);
-   }
+-  }
 -  std::string truncated;
 -  base::TruncateUTF8ToByteSize(value, kMaxSnapshotStringBytes, &truncated);
 -  return truncated;
@@ -2408,7 +2411,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -}
 -
 -}  // namespace
- 
+-
 -struct SteadAgentControlService::FrameSnapshotSource {
 -  raw_ptr<content::RenderFrameHost> frame = nullptr;
 -  raw_ptr<ui::AXTreeManager> manager = nullptr;
@@ -2439,13 +2442,13 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 +    return FindTabById(tab_id);
    }
 -};
--
+ 
 -struct SteadAgentControlService::SnapshotIndex {
 -  uint32_t generation = 0;
 -  base::flat_set<std::string> node_keys;
 -  base::flat_map<std::string, NodeSemanticData> node_semantics;
 -};
- 
+-
 -struct SteadAgentControlService::ListTabsAuthState {
 -  ListTabsAuthState(std::vector<mojom::TabInfoPtr> initial_tabs,
 -                    SteadAgentControlService::ListTabsCallback callback)
@@ -2820,7 +2823,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  
  class SteadAgentControlService::CredentialQuery
      : public password_manager::PasswordStoreConsumer {
-@@ -1835,24 +519,18 @@
+@@ -1835,24 +520,18 @@
          tab_id_(tab_id),
          origin_(origin),
          callback_(std::move(callback)) {}
@@ -2846,7 +2849,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
      if (profile_store_) {
        ++pending_store_count_;
        profile_store_->GetLogins(digest, weak_factory_.GetWeakPtr());
-@@ -1861,9 +539,8 @@
+@@ -1861,9 +540,8 @@
        ++pending_store_count_;
        account_store_->GetLogins(digest, weak_factory_.GetWeakPtr());
      }
@@ -2857,7 +2860,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
      }
    }
  
-@@ -1878,10 +555,9 @@
+@@ -1878,10 +556,9 @@
            std::move(std::get<password_manager::LoginsResult>(
                results_or_error));
        for (password_manager::StoredCredential& credential : results) {
@@ -2869,30 +2872,30 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
      if (--pending_store_count_ == 0) {
        Finish(saw_backend_error_ && credentials_.empty(),
               "Password store query failed.");
-@@ -1889,18 +565,12 @@
+@@ -1889,18 +566,12 @@
    }
  
   private:
 -  void AddCredential(password_manager::PasswordStoreInterface* /*store*/,
 -                     const password_manager::StoredCredential& credential) {
 -    if (credential.blocked_by_user || credential.password_value.empty()) {
+-      return;
+-    }
+-    if (credential.scheme != password_manager::PasswordForm::Scheme::kHtml) {
+-      return;
+-    }
+-    if (credential.signon_realm != origin_.Serialize()) {
 +  void AddCredential(const password_manager::StoredCredential& credential) {
 +    if (credential.blocked_by_user || credential.password_value.empty() ||
 +        credential.scheme != password_manager::PasswordForm::Scheme::kHtml ||
 +        credential.signon_realm != origin_.Serialize()) {
        return;
      }
--    if (credential.scheme != password_manager::PasswordForm::Scheme::kHtml) {
--      return;
--    }
--    if (credential.signon_realm != origin_.Serialize()) {
--      return;
--    }
 -
      CachedCredential cached;
      cached.origin = origin_.Serialize();
      cached.source = "stead_vault";
-@@ -1910,10 +580,7 @@
+@@ -1910,10 +581,7 @@
    }
  
    void Finish(bool backend_error, const std::string& error_message) {
@@ -2904,7 +2907,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
        service_->CompleteCredentialQuery(
            action_id_, tab_id_, std::move(callback_), std::move(credentials_),
            backend_error, error_message);
-@@ -1933,447 +600,9 @@
+@@ -1933,447 +601,9 @@
    base::WeakPtrFactory<CredentialQuery> weak_factory_{this};
  };
  
@@ -3353,7 +3356,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  
  SteadAgentControlService::~SteadAgentControlService() = default;
  
-@@ -2381,32 +610,17 @@
+@@ -2381,32 +611,17 @@
    weak_factory_.InvalidateWeakPtrs();
    receivers_.Clear();
    console_receivers_.Clear();
@@ -3386,7 +3389,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    if (browser_control_) {
      browser_control_->Shutdown();
    }
-@@ -2434,17 +648,96 @@
+@@ -2434,17 +649,125 @@
                            : std::string();
  }
  
@@ -3408,87 +3411,116 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  observers_.Add(std::move(observer));
 -  if (browser_control_) {
 -    browser_control_->ListTabs();
++void SteadAgentControlService::SetCdpConfirmationResolver(
++    CdpConfirmationResolver resolver) {
++  cdp_confirmation_resolver_ = std::move(resolver);
++}
++
 +std::string SteadAgentControlService::CdpCommandScope::ToString() const {
 +  return "CdpCommand|" + std::to_string(tab_id) + "|" + method;
 +}
 +
-+std::optional<std::string> SteadAgentControlService::FilterCdpCommand(
++SteadAgentControlService::CdpCommandFilterResult
++SteadAgentControlService::FilterCdpCommand(
 +    int32_t tab_id,
 +    std::string_view method,
-+    std::optional<bool> targets_steadwright_world) {
-+  const int32_t action_id = NextActionId();
++    std::optional<bool> targets_steadwright_world,
++    const std::string& session_id,
++    mojom::BrainPermissionMode permission_mode) {
 +  const std::string operation(method);
 +  const mojom::ActionClass action_class =
 +      CdpActionClass(method, targets_steadwright_world);
++  const auto audit = [&](int32_t action_id, bool ok, const std::string& code,
++                         const std::string& message,
++                         bool needs_confirmation = false) {
++    if (!session_id.empty()) {
++      action_session_ids_[action_id] = session_id;
++    }
++    auto result = MakeResult(action_id, ok, code, message,
++                             needs_confirmation, false,
++                             needs_confirmation ? "confirmation" : "");
++    RecordAudit(*result, tab_id, action_class, operation);
++  };
++
++  if (tab_id > 0 && IsAgentOwnedTabForUi(tab_id)) {
++    const int32_t action_id = NextActionId();
++    audit(action_id, true, "cdp_allowed",
++          "CDP command allowed on agent-owned tab.");
++    return {CdpCommandDisposition::kAllow, 0, {}};
++  }
 +
 +  if (tab_id > 0 && IsAnyFrameTainted(tab_id) &&
 +      IsTaintSensitiveCdpMethod(method)) {
-+    auto result = MakeResult(action_id, false, "credential_tainted",
-+                             "CDP command denied: frame is credential-tainted.",
-+                             false, false, "credential");
-+    RecordAudit(*result, tab_id, action_class, operation);
-+    return "frame is credential-tainted";
++    const int32_t action_id = NextActionId();
++    audit(action_id, false, "credential_tainted",
++          "CDP command denied: frame is credential-tainted.");
++    return {CdpCommandDisposition::kDeny, 0,
++            "frame is credential-tainted"};
    }
 +
-+  if (tab_id > 0 && IsAgentOwnedTabForUi(tab_id)) {
-+    auto result = MakeResult(action_id, true, "cdp_allowed",
-+                             "CDP command allowed on agent-owned tab.");
-+    RecordAudit(*result, tab_id, action_class, operation);
-+    return std::nullopt;
++  if (tab_id <= 0) {
++    const int32_t action_id = NextActionId();
++    audit(action_id, false, "cdp_denied",
++          "CDP session could not be resolved to a tab.");
++    return {CdpCommandDisposition::kDeny, 0, "policy denied command"};
 +  }
 +
-+  if (tab_id <= 0) {
-+    auto result = MakeResult(action_id, false, "cdp_denied",
-+                             "CDP session could not be resolved to a tab.");
-+    RecordAudit(*result, tab_id, action_class, operation);
-+    return "policy denied command";
++  if (permission_mode == mojom::BrainPermissionMode::kFull) {
++    const int32_t action_id = NextActionId();
++    audit(action_id, true, "cdp_allowed",
++          "CDP command allowed by full-access mode.");
++    return {CdpCommandDisposition::kAllow, 0, {}};
 +  }
 +
 +  if (IsAllowedWithoutConfirmation(method) ||
 +      ((method == "Runtime.evaluate" ||
-+        method == "Runtime.callFunctionOn") &&
++       method == "Runtime.callFunctionOn") &&
 +       targets_steadwright_world.value_or(false))) {
-+    auto result = MakeResult(action_id, true, "cdp_allowed",
-+                             "CDP command allowed by read-only policy.");
-+    RecordAudit(*result, tab_id, action_class, operation);
-+    return std::nullopt;
++    const int32_t action_id = NextActionId();
++    audit(action_id, true, "cdp_allowed",
++          "CDP command allowed by read-only policy.");
++    return {CdpCommandDisposition::kAllow, 0, {}};
 +  }
 +
-+  if (tab_id > 0 &&
-+      CdpMethodRequiresConfirmation(method, targets_steadwright_world)) {
++  if (CdpMethodRequiresConfirmation(method, targets_steadwright_world)) {
++    if (permission_mode == mojom::BrainPermissionMode::kRead) {
++      const int32_t action_id = NextActionId();
++      audit(action_id, false, "cdp_denied",
++            "CDP command denied by read-only mode.");
++      return {CdpCommandDisposition::kDeny, 0, "read-only mode"};
++    }
++
 +    const CdpCommandScope scope{tab_id, operation};
 +    if (ConsumeApprovalGrant(tab_id, action_class, operation,
 +                             scope.ToString())) {
-+      auto result = MakeResult(action_id, true, "cdp_confirmed",
-+                               "CDP command allowed after confirmation.");
-+      RecordAudit(*result, tab_id, action_class, operation);
-+      return std::nullopt;
++      const int32_t action_id = NextActionId();
++      audit(action_id, true, "cdp_confirmed",
++            "CDP command allowed after confirmation.");
++      return {CdpCommandDisposition::kAllow, 0, {}};
 +    }
 +    if (std::optional<int32_t> pending =
 +            FindPendingConfirmation(tab_id, scope.ToString())) {
-+      auto result = MakeResult(action_id, false, "confirmation_required",
-+                               "CDP command is awaiting confirmation.");
-+      RecordAudit(*result, tab_id, action_class, operation);
-+      return "confirmation required (" + std::to_string(*pending) + ")";
++      return {CdpCommandDisposition::kNeedsConfirmation, *pending, {}};
++    }
++    const int32_t action_id = NextActionId();
++    if (!session_id.empty()) {
++      action_session_ids_[action_id] = session_id;
 +    }
 +    RequestConfirmation(action_id, tab_id, action_class, operation,
 +                        scope.ToString(),
 +                        "CDP command on a user-owned tab requires confirmation.");
-+    auto result = MakeResult(action_id, false, "confirmation_required",
-+                             "CDP command requires confirmation.", true, false,
-+                             "confirmation");
-+    RecordAudit(*result, tab_id, action_class, operation);
-+    return "confirmation required (" + std::to_string(action_id) + ")";
++    audit(action_id, false, "needs_confirmation",
++          "CDP command requires confirmation.", true);
++    return {CdpCommandDisposition::kNeedsConfirmation, action_id, {}};
 +  }
 +
-+  auto result = MakeResult(action_id, false, "cdp_denied",
-+                           "CDP command denied by policy.");
-+  RecordAudit(*result, tab_id, action_class, operation);
-+  return "policy denied command";
++  const int32_t action_id = NextActionId();
++  audit(action_id, false, "cdp_denied", "CDP command denied by policy.");
++  return {CdpCommandDisposition::kDeny, 0, "policy denied command"};
  }
  
  void SteadAgentControlService::AddObserver(
-@@ -2459,12 +752,10 @@
+@@ -2459,55 +782,25 @@
    const size_t count = std::min(requested, audit_log_.size());
    std::vector<mojom::AuditEntryPtr> entries;
    entries.reserve(count);
@@ -3501,22 +3533,23 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    std::move(callback).Run(std::move(entries));
  }
  
-@@ -2474,24 +765,17 @@
-   if (request == pending_confirmations_.end()) {
-     return;
-   }
+ void SteadAgentControlService::RespondToConfirmation(int32_t action_id,
+                                                      bool approve) {
+-  const auto request = pending_confirmations_.find(action_id);
+-  if (request == pending_confirmations_.end()) {
+-    return;
+-  }
 -
 -  // The MVP records the decision and unblocks future retries. The original
 -  // action is not replayed because refs may be stale by the time approval lands.
-   auto result = MakeResult(action_id, approve, approve ? "approved" : "denied",
-                            approve ? "Confirmation approved."
+-  auto result = MakeResult(action_id, approve, approve ? "approved" : "denied",
+-                           approve ? "Confirmation approved."
 -                                   : "Confirmation denied.",
 -                           /*stale=*/false, /*needs_snapshot=*/approve,
 -                           /*needs_confirmation=*/false,
 -                           /*target_missing=*/false);
-+                                   : "Confirmation denied.");
-   if (approve) {
-     const auto scope = pending_confirmation_scopes_.find(action_id);
+-  if (approve) {
+-    const auto scope = pending_confirmation_scopes_.find(action_id);
 -    approval_grants_.push_back({request->second->tab_id,
 -                                request->second->action_class,
 -                                request->second->operation,
@@ -3524,16 +3557,16 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -                                    ? std::string()
 -                                    : scope->second,
 -                                base::TimeTicks::Now()});
-+    approval_grants_.push_back(
-+        {request->second->tab_id, request->second->action_class,
-+         request->second->operation,
-+         scope == pending_confirmation_scopes_.end() ? std::string()
-+                                                     : scope->second,
-+         base::TimeTicks::Now()});
-     while (approval_grants_.size() > kMaxApprovalGrants) {
-       approval_grants_.pop_front();
-     }
-@@ -2503,11 +787,11 @@
+-    while (approval_grants_.size() > kMaxApprovalGrants) {
+-      approval_grants_.pop_front();
+-    }
+-  }
+-  RecordAudit(*result, request->second->tab_id, request->second->action_class,
+-              request->second->operation);
+-  pending_confirmation_scopes_.erase(action_id);
+-  pending_confirmations_.erase(request);
++  ResolveConfirmation(action_id, approve ? CdpConfirmationOutcome::kApproved
++                                         : CdpConfirmationOutcome::kDenied);
  }
  
  void SteadAgentControlService::Cancel(int32_t tab_id) {
@@ -3548,7 +3581,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    ClearTabDriving(tab_id);
    for (auto& observer : console_observers_) {
      observer->OnCancelled(tab_id);
-@@ -2517,2764 +801,124 @@
+@@ -2517,2764 +810,124 @@
  void SteadAgentControlService::GetActiveTabContext(
      GetActiveTabContextCallback callback) {
    BrowserWindowInterface* browser = chrome::FindLastActiveWithProfile(profile_);
@@ -3559,13 +3592,6 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    content::WebContents* contents =
 -      browser->GetTabStripModel()->GetActiveWebContents();
 -  if (!contents) {
--    std::move(callback).Run(nullptr);
--    return;
--  }
--  const GURL& url = contents->GetLastCommittedURL();
--  // Context is only meaningful for web pages; WebUI and internal schemes stay
--  // out of the model-facing tab context.
--  if (!url.SchemeIsHTTPOrHTTPS()) {
 +      browser && browser->GetTabStripModel()
 +          ? browser->GetTabStripModel()->GetActiveWebContents()
 +          : nullptr;
@@ -3573,6 +3599,13 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
      std::move(callback).Run(nullptr);
      return;
    }
+-  const GURL& url = contents->GetLastCommittedURL();
+-  // Context is only meaningful for web pages; WebUI and internal schemes stay
+-  // out of the model-facing tab context.
+-  if (!url.SchemeIsHTTPOrHTTPS()) {
+-    std::move(callback).Run(nullptr);
+-    return;
+-  }
 -  const SessionID session_id = sessions::SessionTabHelper::IdForTab(contents);
 -  if (!session_id.is_valid()) {
 +  const SessionID id = sessions::SessionTabHelper::IdForTab(contents);
@@ -6394,7 +6427,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  void SteadAgentControlService::CompleteCredentialQuery(
-@@ -5285,7 +929,6 @@
+@@ -5285,7 +938,6 @@
      bool backend_error,
      const std::string& error_message) {
    PurgeExpiredCredentialCache();
@@ -6402,7 +6435,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    std::vector<mojom::CredentialRefPtr> refs;
    mojom::ReadResultPtr result;
    if (backend_error) {
-@@ -5297,949 +940,354 @@
+@@ -5297,949 +949,418 @@
    } else {
      int label_index = 1;
      for (CachedCredential& credential : credentials) {
@@ -6769,8 +6802,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -                      /*stale=*/false, /*needs_snapshot=*/false,
 -                      /*needs_confirmation=*/false,
 -                      /*target_missing=*/false, "credential"));
--    return;
--  }
+     return;
+   }
 -
 -  if (!field || !field->frame) {
 -    finish(MakeResult(action_id, false, kTargetMissing,
@@ -6778,8 +6811,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -                      /*stale=*/false, /*needs_snapshot=*/false,
 -                      /*needs_confirmation=*/false,
 -                      /*target_missing=*/true, "target"));
-     return;
-   }
+-    return;
+-  }
 -
 -  mojom::ActionResultPtr gate = MaybeGateAction(
 -      action_id, tab_id, action_class, operation,
@@ -6792,10 +6825,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 +                                  credential_handle, marker), policy);
    if (gate) {
 -    finish(std::move(gate));
-+    RecordAudit(*gate, tab_id, mojom::ActionClass::kCredential, operation);
-+    std::move(callback).Run(std::move(gate));
-     return;
-   }
+-    return;
+-  }
 -
 -  finish(MakeResult(action_id, false, kCredentialBackendUnavailable,
 -                    "Native TOTP backend is not wired yet.",
@@ -6843,8 +6874,10 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    content::WebContents* web_contents,
 -    int32_t tab_id) {
 -  if (!web_contents) {
--    return;
--  }
++    RecordAudit(*gate, tab_id, mojom::ActionClass::kCredential, operation);
++    std::move(callback).Run(std::move(gate));
+     return;
+   }
 -
 -  if (!observed_tabs_.contains(tab_id)) {
 -    observed_tabs_[tab_id] =
@@ -7015,7 +7048,20 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 +                           approval_scope)) {
      return nullptr;
    }
--
++  if (std::optional<int32_t> pending =
++          FindPendingConfirmation(tab_id, approval_scope)) {
++    return MakeResult(*pending, false, "needs_confirmation",
++                      "Saved-password use requires confirmation.", true, false,
++                      "confirmation");
++  }
++  RequestConfirmation(action_id, tab_id, mojom::ActionClass::kCredential,
++                      operation, approval_scope,
++                      "Saved-password use requires confirmation in ask-first mode.");
++  return MakeResult(action_id, false, "needs_confirmation",
++                    "Saved-password use requires confirmation.", true, false,
++                    "confirmation");
++}
+ 
 -  const ui::AXNodeData& data = node->data();
 -  const ui::AXTree& tree = *source.tree;
 -  const std::string& frame_token = source.frame_token;
@@ -7115,18 +7161,27 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  }
 -
 -  return out;
-+  if (std::optional<int32_t> pending =
-+          FindPendingConfirmation(tab_id, approval_scope)) {
-+    return MakeResult(*pending, false, "needs_confirmation",
-+                      "Saved-password use requires confirmation.", true, false,
-+                      "confirmation");
-+  }
-+  RequestConfirmation(action_id, tab_id, mojom::ActionClass::kCredential,
-+                      operation, approval_scope,
-+                      "Saved-password use requires confirmation in ask-first mode.");
-+  return MakeResult(action_id, false, "needs_confirmation",
-+                    "Saved-password use requires confirmation.", true, false,
-+                    "confirmation");
++int32_t SteadAgentControlService::RequestConfirmation(
++    int32_t action_id,
++    int32_t tab_id,
++    mojom::ActionClass action_class,
++    const std::string& operation,
++    const std::string& approval_scope,
++    const std::string& reason) {
++  const auto session = action_session_ids_.find(action_id);
++  const std::string session_id =
++      session == action_session_ids_.end() ? std::string() : session->second;
++  pending_confirmations_[action_id] = mojom::ConfirmationRequest::New(
++      action_id, session_id, tab_id, action_class, operation, reason);
++  pending_confirmation_scopes_[action_id] = approval_scope;
++  NotifyConfirmation(mojom::ConfirmationRequest::New(
++      action_id, session_id, tab_id, action_class, operation, reason));
++  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++      FROM_HERE,
++      base::BindOnce(&SteadAgentControlService::ExpireConfirmation,
++                     weak_factory_.GetWeakPtr(), action_id),
++      kConfirmationTtl);
++  return action_id;
  }
  
 -mojom::ActionResultPtr SteadAgentControlService::PerformAccessibilityAction(
@@ -7141,7 +7196,10 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    RecordAudit(*result, tab_id, action_class, operation);
 -    return result;
 -  };
--
++void SteadAgentControlService::ExpireConfirmation(int32_t action_id) {
++  ResolveConfirmation(action_id, CdpConfirmationOutcome::kTimedOut);
++}
+ 
 -  if (!ref || !ref->frame) {
 -    return finish(MakeResult(action_id, false, kTargetMissing,
 -                             "Target ref was empty.",
@@ -7166,8 +7224,14 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -                      NodeApprovalScope(*ref, action_class, operation));
 -  if (gate) {
 -    return finish(std::move(gate));
--  }
--
++void SteadAgentControlService::ResolveConfirmation(
++    int32_t action_id,
++    CdpConfirmationOutcome outcome) {
++  const auto request = pending_confirmations_.find(action_id);
++  if (request == pending_confirmations_.end()) {
++    return;
+   }
+ 
 -  mojom::ActionResultPtr result =
 -      browser_control_->DispatchAccessibilityAction(*ref, action_id, action,
 -                                                    value);
@@ -7176,7 +7240,19 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -        (action_class == mojom::ActionClass::kCredential ||
 -         action_class == mojom::ActionClass::kPayment)) {
 -      MarkFrameTainted(*ref->frame);
--    }
++  const auto scope = pending_confirmation_scopes_.find(action_id);
++  const std::string approval_scope =
++      scope == pending_confirmation_scopes_.end() ? std::string()
++                                                  : scope->second;
++  const bool is_cdp = base::StartsWith(approval_scope, "CdpCommand|");
++  const bool approved = outcome == CdpConfirmationOutcome::kApproved;
++  if (approved) {
++    approval_grants_.push_back(
++        {request->second->tab_id, request->second->action_class,
++         request->second->operation, approval_scope, base::TimeTicks::Now()});
++    while (approval_grants_.size() > kMaxApprovalGrants) {
++      approval_grants_.pop_front();
+     }
 -    const TabEventState event_state =
 -        browser_control_->GetTabEventState(tab_id);
 -    pending_action_by_tab_[tab_id] = action_id;
@@ -7184,38 +7260,46 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    EmitEvent(mojom::ControlEventType::kActionDispatched, tab_id,
 -              ref->frame->frame_token, action_id, event_state.url,
 -              event_state.title, kAccessibilityActionAccepted, operation);
--  }
--
--  return finish(std::move(result));
-+int32_t SteadAgentControlService::RequestConfirmation(
-+    int32_t action_id,
-+    int32_t tab_id,
-+    mojom::ActionClass action_class,
-+    const std::string& operation,
-+    const std::string& approval_scope,
-+    const std::string& reason) {
-+  const auto session = action_session_ids_.find(action_id);
-+  const std::string session_id =
-+      session == action_session_ids_.end() ? std::string() : session->second;
-+  pending_confirmations_[action_id] = mojom::ConfirmationRequest::New(
-+      action_id, session_id, tab_id, action_class, operation, reason);
-+  pending_confirmation_scopes_[action_id] = approval_scope;
-+  NotifyConfirmation(mojom::ConfirmationRequest::New(
-+      action_id, session_id, tab_id, action_class, operation, reason));
-+  return action_id;
- }
+   }
  
+-  return finish(std::move(result));
+-}
+-
 -void SteadAgentControlService::OnNavigationCommitted(
-+std::optional<int32_t> SteadAgentControlService::FindPendingConfirmation(
-     int32_t tab_id,
+-    int32_t tab_id,
 -    content::NavigationHandle* navigation_handle) {
 -  if (!navigation_handle) {
 -    return;
 -  }
 -  if (!navigation_handle->HasCommitted()) {
 -    return;
--  }
--
++  std::string message;
++  switch (outcome) {
++    case CdpConfirmationOutcome::kApproved:
++      message = "Confirmation approved.";
++      break;
++    case CdpConfirmationOutcome::kDenied:
++      message = "Confirmation denied.";
++      break;
++    case CdpConfirmationOutcome::kTimedOut:
++      message = "Confirmation timed out.";
++      break;
++    case CdpConfirmationOutcome::kCancelled:
++      message = "Confirmation cancelled.";
++      break;
+   }
++  auto result = MakeResult(
++      action_id, approved,
++      is_cdp ? (approved ? "cdp_confirmed" : "cdp_denied")
++             : (approved ? "approved" : "denied"),
++      message);
++  const int32_t tab_id = request->second->tab_id;
++  const mojom::ActionClass action_class = request->second->action_class;
++  const std::string operation = request->second->operation;
++  RecordAudit(*result, tab_id, action_class, operation);
++  pending_confirmation_scopes_.erase(action_id);
++  pending_confirmations_.erase(request);
+ 
 -  const bool same_document = navigation_handle->IsSameDocument();
 -  std::string frame_token;
 -  content::RenderFrameHost* frame = navigation_handle->GetRenderFrameHost();
@@ -7240,6 +7324,17 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      !navigation_handle->IsErrorPage()) {
 -    EmitAuthRedirectEvent(tab_id, frame_token, originating_action_id,
 -                          BuildAuthRedirectInfo(navigation_handle->GetURL()));
++  if (is_cdp && !cdp_confirmation_resolver_.is_null()) {
++    cdp_confirmation_resolver_.Run(action_id, outcome);
+   }
+ }
+ 
+-void SteadAgentControlService::OnRenderFrameDeleted(
++std::optional<int32_t> SteadAgentControlService::FindPendingConfirmation(
+     int32_t tab_id,
+-    content::RenderFrameHost* render_frame_host) {
+-  if (!render_frame_host) {
+-    return;
 +    const std::string& approval_scope) const {
 +  for (const auto& [action_id, scope] : pending_confirmation_scopes_) {
 +    const auto request = pending_confirmations_.find(action_id);
@@ -7248,35 +7343,9 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 +      return action_id;
 +    }
    }
-+  return std::nullopt;
- }
- 
--void SteadAgentControlService::OnRenderFrameDeleted(
-+bool SteadAgentControlService::ConsumeApprovalGrant(
-     int32_t tab_id,
--    content::RenderFrameHost* render_frame_host) {
--  if (!render_frame_host) {
--    return;
-+    mojom::ActionClass action_class,
-+    const std::string& operation,
-+    const std::string& approval_scope) {
-+  const base::TimeTicks now = base::TimeTicks::Now();
-+  for (auto grant = approval_grants_.begin(); grant != approval_grants_.end();) {
-+    if (now - grant->created_at > kApprovalGrantTtl) {
-+      grant = approval_grants_.erase(grant);
-+      continue;
-+    }
-+    if (grant->tab_id == tab_id && grant->action_class == action_class &&
-+        grant->operation == operation &&
-+        grant->approval_scope == approval_scope) {
-+      approval_grants_.erase(grant);
-+      return true;
-+    }
-+    ++grant;
-   }
 -
 -  ClearTaintForFrame(tab_id, render_frame_host->GetAXTreeID().ToString());
-+  return false;
++  return std::nullopt;
  }
  
 -void SteadAgentControlService::OnPopupOpened(
@@ -7295,14 +7364,26 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      if (originating_action_id != kNoOriginatingAction) {
 -        pending_action_by_tab_[new_tab_id] = originating_action_id;
 -        SchedulePendingActionClear(new_tab_id, originating_action_id);
--      }
-+void SteadAgentControlService::ClearApprovalGrantsForTab(int32_t tab_id) {
++bool SteadAgentControlService::ConsumeApprovalGrant(
++    int32_t tab_id,
++    mojom::ActionClass action_class,
++    const std::string& operation,
++    const std::string& approval_scope) {
++  const base::TimeTicks now = base::TimeTicks::Now();
 +  for (auto grant = approval_grants_.begin(); grant != approval_grants_.end();) {
-+    if (grant->tab_id == tab_id) {
++    if (now - grant->created_at > kApprovalGrantTtl) {
 +      grant = approval_grants_.erase(grant);
-+    } else {
-+      ++grant;
++      continue;
++    }
++    if (grant->tab_id == tab_id && grant->action_class == action_class &&
++        grant->operation == operation &&
++        grant->approval_scope == approval_scope) {
++      if (!base::StartsWith(approval_scope, "CdpCommand|")) {
++        approval_grants_.erase(grant);
+       }
++      return true;
      }
++    ++grant;
    }
 -
 -  std::string frame_token;
@@ -7314,6 +7395,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  EmitEvent(mojom::ControlEventType::kPopup, opener_tab_id, frame_token,
 -            originating_action_id, url.spec(), event_state.title,
 -            kPopupOpened, std::string(), new_tab_id);
++  return false;
  }
  
 -void SteadAgentControlService::OnTabClosed(int32_t tab_id) {
@@ -7331,12 +7413,12 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    if (chooser != active_file_choosers_.end()) {
 -      active_file_chooser_by_helper_.erase(chooser->second.helper);
 -      active_file_choosers_.erase(chooser);
-+void SteadAgentControlService::ClearPendingConfirmationsForTab(
-+    int32_t tab_id) {
-+  std::vector<int32_t> action_ids;
-+  for (const auto& [action_id, request] : pending_confirmations_) {
-+    if (request->tab_id == tab_id) {
-+      action_ids.push_back(action_id);
++void SteadAgentControlService::ClearApprovalGrantsForTab(int32_t tab_id) {
++  for (auto grant = approval_grants_.begin(); grant != approval_grants_.end();) {
++    if (grant->tab_id == tab_id) {
++      grant = approval_grants_.erase(grant);
++    } else {
++      ++grant;
      }
 -    active_file_chooser_by_tab_.erase(active_file_chooser);
    }
@@ -7346,8 +7428,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  EmitEvent(mojom::ControlEventType::kTabClosed, tab_id, std::string(),
 -            originating_action_id, std::string(), std::string(),
 -            "tab_closed", std::string());
--}
--
+ }
+ 
 -void SteadAgentControlService::OnBeforeUnloadDialog(
 -    int32_t tab_id,
 -    std::string_view state) {
@@ -7383,17 +7465,10 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  EmitDialogEvent(tab_id, frame_token,
 -                  BuildJavaScriptDialogInfo(handle, dialog_type, message_text,
 -                                            default_prompt_text, is_pending));
-+  for (int32_t action_id : action_ids) {
-+    pending_confirmations_.erase(action_id);
-+    pending_confirmation_scopes_.erase(action_id);
-+    action_session_ids_.erase(action_id);
-+  }
- }
- 
+-}
+-
 -void SteadAgentControlService::OnJavaScriptDialogClosed(
-+void SteadAgentControlService::RecordAudit(
-+    const mojom::ActionResult& result,
-     int32_t tab_id,
+-    int32_t tab_id,
 -    content::JavaScriptDialogType dialog_type,
 -    javascript_dialogs::TabModalDialogManager::DismissalCause cause,
 -    bool success) {
@@ -7405,19 +7480,15 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -    const auto dialog = active_dialogs_.find(handle);
 -    if (dialog != active_dialogs_.end()) {
 -      frame_token = dialog->second.frame_token;
--    }
++void SteadAgentControlService::ClearPendingConfirmationsForTab(
++    int32_t tab_id) {
++  std::vector<int32_t> action_ids;
++  for (const auto& [action_id, request] : pending_confirmations_) {
++    if (request->tab_id == tab_id) {
++      action_ids.push_back(action_id);
+     }
 -    active_dialogs_.erase(handle);
 -    active_dialog_by_tab_.erase(active_dialog);
-+    mojom::ActionClass action_class,
-+    const std::string& operation) {
-+  const auto session = action_session_ids_.find(result.action_id);
-+  const std::string session_id =
-+      session == action_session_ids_.end() ? std::string() : session->second;
-+  auto entry = mojom::AuditEntry::New(
-+      result.action_id, next_audit_sequence_++, session_id, tab_id,
-+      action_class, operation, result.code, result.message, result.ok);
-+  for (auto& observer : console_observers_) {
-+    observer->OnAuditEntry(CloneAuditEntry(*entry));
    }
 -
 -  EmitDialogEvent(tab_id, frame_token,
@@ -7434,21 +7505,19 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      !SameProfile(Profile::FromBrowserContext(web_contents->GetBrowserContext()),
 -                   profile_)) {
 -    return;
-+  audit_log_.push_back(std::move(entry));
-+  while (audit_log_.size() > kMaxAuditEntries) {
-+    audit_log_.pop_front();
-   }
+-  }
 -
 -  const SessionID tab_session_id =
 -      sessions::SessionTabHelper::IdForTab(web_contents);
 -  if (!tab_session_id.is_valid()) {
 -    return;
-+  if (!result.needs_confirmation) {
-+    action_session_ids_.erase(result.action_id);
++  for (int32_t action_id : action_ids) {
++    ResolveConfirmation(action_id, CdpConfirmationOutcome::kCancelled);
    }
 -  const int32_t tab_id = tab_session_id.id();
 -  browser_control_->ObserveTab(web_contents, tab_id);
--
++}
+ 
 -  const auto existing_helper = active_file_chooser_by_helper_.find(helper);
 -  if (existing_helper != active_file_chooser_by_helper_.end()) {
 -    active_file_choosers_.erase(existing_helper->second);
@@ -7462,12 +7531,21 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      active_file_choosers_.erase(chooser);
 -    }
 -    active_file_chooser_by_tab_.erase(existing_tab);
-+  if (result.ok && tab_id > 0 &&
-+      action_class != mojom::ActionClass::kReadOnly) {
-+    MarkTabDriving(tab_id);
++void SteadAgentControlService::RecordAudit(
++    const mojom::ActionResult& result,
++    int32_t tab_id,
++    mojom::ActionClass action_class,
++    const std::string& operation) {
++  const auto session = action_session_ids_.find(result.action_id);
++  const std::string session_id =
++      session == action_session_ids_.end() ? std::string() : session->second;
++  auto entry = mojom::AuditEntry::New(
++      result.action_id, next_audit_sequence_++, session_id, tab_id,
++      action_class, operation, result.code, result.message, result.ok);
++  for (auto& observer : console_observers_) {
++    observer->OnAuditEntry(CloneAuditEntry(*entry));
    }
-+}
- 
+-
 -  const std::string handle =
 -      "file-chooser-" + std::to_string(next_file_chooser_id_++);
 -  const std::string frame_token =
@@ -7491,10 +7569,10 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -        BuildFileChooserInfo(handle,
 -                             handled ? "agent_selected" : "agent_rejected",
 -                             params));
-+void SteadAgentControlService::NotifyConfirmation(
-+    mojom::ConfirmationRequestPtr request) {
-+  if (!request) {
-     return;
+-    return;
++  audit_log_.push_back(std::move(entry));
++  while (audit_log_.size() > kMaxAuditEntries) {
++    audit_log_.pop_front();
    }
 -
 -  ActiveFileChooserState state;
@@ -7530,15 +7608,20 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -      active_file_choosers_.erase(chooser);
 -    }
 -    active_file_chooser_by_helper_.erase(active_file_chooser);
--  }
++  if (!result.needs_confirmation) {
++    action_session_ids_.erase(result.action_id);
+   }
 -
 -  if (!handle.empty()) {
 -    EmitFileChooserEvent(
 -        tab_id, frame_token, BuildClosedFileChooserInfo(
 -                    handle, mode, files_selected ? "selected" : "cancelled"));
--  }
--}
--
++  if (result.ok && tab_id > 0 &&
++      action_class != mojom::ActionClass::kReadOnly) {
++    MarkTabDriving(tab_id);
+   }
+ }
+ 
 -void SteadAgentControlService::ScheduleForgetObservedTab(int32_t tab_id) {
 -  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
 -      FROM_HERE, base::BindOnce(&SteadAgentControlService::ForgetObservedTab,
@@ -7553,6 +7636,11 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  const auto pending_action = pending_action_by_tab_.find(tab_id);
 -  if (pending_action == pending_action_by_tab_.end()) {
 -    return kNoOriginatingAction;
++void SteadAgentControlService::NotifyConfirmation(
++    mojom::ConfirmationRequestPtr request) {
++  if (!request) {
++    return;
++  }
 +  for (auto& observer : console_observers_) {
 +    observer->OnConfirmation(mojom::ConfirmationRequest::New(
 +        request->action_id, request->session_id, request->tab_id,
@@ -7590,7 +7678,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  void SteadAgentControlService::MarkTabDriving(int32_t tab_id) {
-@@ -6250,9 +1298,7 @@
+@@ -6250,9 +1371,7 @@
        observer->OnDrivingStateChanged(tab_id, true);
      }
    }
@@ -7601,7 +7689,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
        FROM_HERE,
        base::BindOnce(&SteadAgentControlService::CheckDrivingIdle,
-@@ -6262,16 +1308,13 @@
+@@ -6262,16 +1381,13 @@
  
  void SteadAgentControlService::CheckDrivingIdle(int32_t tab_id) {
    const auto last = last_drive_action_by_tab_.find(tab_id);
@@ -7620,7 +7708,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  void SteadAgentControlService::ClearTabDriving(int32_t tab_id) {
-@@ -6281,69 +1324,38 @@
+@@ -6281,69 +1397,38 @@
    for (auto& observer : console_observers_) {
      observer->OnDrivingStateChanged(tab_id, false);
    }
@@ -7703,7 +7791,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
          IsFrameTainted(tab_id, key.substr(prefix.size()))) {
        return true;
      }
-@@ -6352,601 +1364,90 @@
+@@ -6352,601 +1437,90 @@
  }
  
  void SteadAgentControlService::MarkFrameTainted(
@@ -7766,12 +7854,16 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -}
 -
 -void SteadAgentControlService::EmitDownloadEvent(
--    int32_t tab_id,
++void SteadAgentControlService::OnNavigationCommitted(
+     int32_t tab_id,
 -    int32_t originating_action_id,
 -    mojom::DownloadInfoPtr download) {
 -  if (!download) {
--    return;
--  }
++    content::NavigationHandle* navigation_handle) {
++  if (!navigation_handle || !navigation_handle->HasCommitted() ||
++      navigation_handle->IsSameDocument()) {
+     return;
+   }
 -
 -  const TabEventState tab_state = tab_id == 0
 -                                      ? TabEventState()
@@ -7790,20 +7882,18 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -        /*related_tab_id=*/0, CloneDownloadInfo(*download), nullptr, nullptr,
 -        nullptr, nullptr);
 -    observer->OnEvent(std::move(event));
--  }
++  if (navigation_handle->IsInPrimaryMainFrame()) {
++    ClearTaintForTab(tab_id);
+   }
 -}
 -
 -void SteadAgentControlService::EmitDialogEvent(
-+void SteadAgentControlService::OnNavigationCommitted(
-     int32_t tab_id,
+-    int32_t tab_id,
 -    const std::string& frame_token,
 -    mojom::DialogInfoPtr dialog) {
 -  if (!dialog) {
-+    content::NavigationHandle* navigation_handle) {
-+  if (!navigation_handle || !navigation_handle->HasCommitted() ||
-+      navigation_handle->IsSameDocument()) {
-     return;
-   }
+-    return;
+-  }
 -
 -  const TabEventState tab_state = tab_id == 0
 -                                      ? TabEventState()
@@ -7823,13 +7913,14 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -        tab_state.title, dialog->type, dialog->state, /*related_tab_id=*/0,
 -        nullptr, CloneDialogInfo(*dialog), nullptr, nullptr, nullptr);
 -    observer->OnEvent(std::move(event));
-+  if (navigation_handle->IsInPrimaryMainFrame()) {
-+    ClearTaintForTab(tab_id);
++  if (IsAgentOwnedTabForUi(tab_id)) {
++    UpdateDriveOverlay(tab_id, true);
    }
--}
--
+ }
+ 
 -void SteadAgentControlService::EmitPermissionPromptEvent(
--    int32_t tab_id,
++void SteadAgentControlService::OnRenderFrameDeleted(
+     int32_t tab_id,
 -    mojom::PermissionPromptInfoPtr permission_prompt) {
 -  if (!permission_prompt) {
 -    return;
@@ -7855,20 +7946,25 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -        nullptr, ClonePermissionPromptInfo(*permission_prompt), nullptr,
 -        nullptr);
 -    observer->OnEvent(std::move(event));
-+  if (IsAgentOwnedTabForUi(tab_id)) {
-+    UpdateDriveOverlay(tab_id, true);
++    content::RenderFrameHost* render_frame_host) {
++  if (render_frame_host) {
++    ClearTaintForFrame(tab_id,
++                       render_frame_host->GetFrameToken().ToString());
    }
  }
  
 -void SteadAgentControlService::EmitAuthRedirectEvent(
-+void SteadAgentControlService::OnRenderFrameDeleted(
-     int32_t tab_id,
+-    int32_t tab_id,
 -    const std::string& frame_token,
 -    int32_t originating_action_id,
 -    mojom::AuthRedirectInfoPtr auth_redirect) {
 -  if (!auth_redirect) {
--    return;
--  }
++void SteadAgentControlService::OnPopupOpened(
++    int32_t opener_tab_id,
++    content::WebContents* new_contents) {
++  if (!new_contents || !IsAgentOwnedTabForUi(opener_tab_id)) {
+     return;
+   }
 -
 -  const TabEventState tab_state = tab_id == 0
 -                                      ? TabEventState()
@@ -7886,22 +7982,16 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -        auth_redirect->provider_hint, /*related_tab_id=*/0, nullptr, nullptr,
 -        nullptr, CloneAuthRedirectInfo(*auth_redirect), nullptr);
 -    observer->OnEvent(std::move(event));
-+    content::RenderFrameHost* render_frame_host) {
-+  if (render_frame_host) {
-+    ClearTaintForFrame(tab_id,
-+                       render_frame_host->GetFrameToken().ToString());
-   }
- }
- 
+-  }
+-}
+-
 -void SteadAgentControlService::EmitFileChooserEvent(
 -    int32_t tab_id,
 -    const std::string& frame_token,
 -    mojom::FileChooserInfoPtr file_chooser) {
 -  if (!file_chooser) {
-+void SteadAgentControlService::OnPopupOpened(
-+    int32_t opener_tab_id,
-+    content::WebContents* new_contents) {
-+  if (!new_contents || !IsAgentOwnedTabForUi(opener_tab_id)) {
++  const SessionID id = sessions::SessionTabHelper::IdForTab(new_contents);
++  if (!id.is_valid()) {
      return;
    }
 -
@@ -7925,8 +8015,11 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -        nullptr, nullptr, CloneFileChooserInfo(*file_chooser));
 -    observer->OnEvent(std::move(event));
 -  }
--}
--
++  browser_control_->ObserveTab(new_contents, id.id());
++  browser_control_->MarkAgentOwnedTab(id.id(),
++                                      AgentOwnerSessionForUi(opener_tab_id));
+ }
+ 
 -int32_t SteadAgentControlService::FindTabIdForUrl(const GURL& url) {
 -  if (!url.is_valid()) {
 -    return 0;
@@ -8245,10 +8338,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -void SteadAgentControlService::NotifyConfirmation(
 -    mojom::ConfirmationRequestPtr request) {
 -  if (!request) {
-+  const SessionID id = sessions::SessionTabHelper::IdForTab(new_contents);
-+  if (!id.is_valid()) {
-     return;
-   }
+-    return;
+-  }
 -
 -  for (auto& observer : console_observers_) {
 -    observer->OnConfirmation(mojom::ConfirmationRequest::New(
@@ -8288,11 +8379,8 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 -  }
 -
 -  return false;
-+  browser_control_->ObserveTab(new_contents, id.id());
-+  browser_control_->MarkAgentOwnedTab(id.id(),
-+                                      AgentOwnerSessionForUi(opener_tab_id));
- }
- 
+-}
+-
 -void SteadAgentControlService::ClearApprovalGrantsForTab(int32_t tab_id) {
 -  for (auto grant = approval_grants_.begin(); grant != approval_grants_.end();) {
 -    if (grant->tab_id == tab_id) {
@@ -8349,7 +8437,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
  }
  
  int32_t SteadAgentControlService::NextActionId() {
-@@ -6963,15 +1464,12 @@
+@@ -6963,15 +1537,12 @@
      bool ok,
      const std::string& code,
      const std::string& message,
@@ -8372,14 +8460,19 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.cc
 Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h	2026-09-09 00:09:21.451893063 -0700
-+++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h	2026-09-09 04:15:54.376706384 -0700
-@@ -18,60 +18,33 @@
++++ src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h	2026-09-09 21:02:06.346881728 -0700
+@@ -15,64 +15,61 @@
+ 
+ #include "base/containers/flat_map.h"
+ #include "base/containers/flat_set.h"
++#include "base/functional/callback.h"
  #include "base/memory/raw_ptr.h"
  #include "base/memory/weak_ptr.h"
  #include "base/time/time.h"
 +#include "base/values.h"
  #include "chrome/browser/ui/stead/agent_control/agent_control.mojom.h"
 -#include "components/javascript_dialogs/tab_modal_dialog_manager.h"
++#include "chrome/browser/ui/stead/brain/brain_console.mojom.h"
  #include "components/keyed_service/core/keyed_service.h"
 -#include "mojo/public/cpp/base/big_buffer.h"
  #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -8437,26 +8530,52 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
 +                                 public mojom::AgentControl,
 +                                 public mojom::ControlConsole {
   public:
++  enum class CdpCommandDisposition {
++    kAllow,
++    kDeny,
++    kNeedsConfirmation,
++  };
++
++  enum class CdpConfirmationOutcome {
++    kApproved,
++    kDenied,
++    kTimedOut,
++    kCancelled,
++  };
++
++  struct CdpCommandFilterResult {
++    CdpCommandDisposition disposition = CdpCommandDisposition::kDeny;
++    int32_t confirmation_action_id = 0;
++    std::string reason;
++  };
++
++  using CdpConfirmationResolver =
++      base::RepeatingCallback<void(int32_t, CdpConfirmationOutcome)>;
++
    explicit SteadAgentControlService(Profile* profile);
    SteadAgentControlService(const SteadAgentControlService&) = delete;
-@@ -85,107 +58,37 @@
+   SteadAgentControlService& operator=(const SteadAgentControlService&) = delete;
+@@ -85,107 +82,40 @@
  
    bool IsAgentOwnedTabForUi(int32_t tab_id) const;
    std::string AgentOwnerSessionForUi(int32_t tab_id) const;
 +  void MarkAgentOwnedTabForUi(int32_t tab_id,
 +                              const std::string& owner_session_id);
-+
-+  // Returns a reason without the "stead: " prefix when a CDP command must be
-+  // vetoed. Every call is synchronously audited; confirmation requests are
-+  // queued for ControlConsole and satisfied by a matching retry within 60s.
-+  std::optional<std::string> FilterCdpCommand(
-+      int32_t tab_id,
-+      std::string_view method,
-+      std::optional<bool> targets_steadwright_world);
  
 -  // The brain calls this immediately before dispatching one broker action.
 -  // NextActionId consumes it so confirmations and audit entries remain bound
 -  // to the chat that initiated them.
++  // Returns whether a CDP command should be forwarded, denied, or held for a
++  // ControlConsole confirmation. Every call is synchronously audited.
++  CdpCommandFilterResult FilterCdpCommand(
++      int32_t tab_id,
++      std::string_view method,
++      std::optional<bool> targets_steadwright_world,
++      const std::string& session_id,
++      mojom::BrainPermissionMode permission_mode);
++
++  void SetCdpConfirmationResolver(CdpConfirmationResolver resolver);
++
 +  // The stdio bridge calls this immediately before dispatching one credential
 +  // operation so its audit/confirmation remains attached to the chat.
    void SetNextActionSession(const std::string& session_id);
@@ -8567,7 +8686,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
  
    // mojom::ControlConsole:
    void AddObserver(mojo::PendingRemote<mojom::ConsoleObserver> observer)
-@@ -199,26 +102,8 @@
+@@ -199,26 +129,8 @@
   private:
    class PrivateBrowserControl;
    class ObservedTab;
@@ -8595,7 +8714,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
    struct CachedCredential {
      std::string origin;
      std::string source;
-@@ -227,206 +112,117 @@
+@@ -227,206 +139,121 @@
      base::TimeTicks created_at;
    };
  
@@ -8695,6 +8814,9 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
                              const std::string& approval_scope);
    void ClearApprovalGrantsForTab(int32_t tab_id);
    void ClearPendingConfirmationsForTab(int32_t tab_id);
++  void ExpireConfirmation(int32_t action_id);
++  void ResolveConfirmation(int32_t action_id,
++                           CdpConfirmationOutcome outcome);
 +
 +  void RecordAudit(const mojom::ActionResult& result,
 +                   int32_t tab_id,
@@ -8856,6 +8978,7 @@ Index: src/chrome/browser/ui/stead/agent_control/stead_agent_control_service.h
    base::flat_map<int32_t, mojom::ConfirmationRequestPtr>
        pending_confirmations_;
    base::flat_map<int32_t, std::string> pending_confirmation_scopes_;
++  CdpConfirmationResolver cdp_confirmation_resolver_;
    int32_t next_action_id_ = 1;
 -  int32_t next_dialog_id_ = 1;
 -  int32_t next_file_chooser_id_ = 1;
@@ -8898,7 +9021,7 @@ Index: src/chrome/browser/ui/stead/brain/BUILD.gn
 Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc	2026-09-09 00:36:31.948818985 -0700
-+++ src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc	2026-09-09 04:39:40.451192554 -0700
++++ src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc	2026-09-09 20:59:30.965531611 -0700
 @@ -7,7 +7,9 @@
  #include <unistd.h>
  
@@ -8909,7 +9032,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
  #include <utility>
  
  #include "base/containers/span.h"
-@@ -16,25 +18,77 @@
+@@ -16,25 +18,78 @@
  #include "base/json/json_reader.h"
  #include "base/json/json_writer.h"
  #include "base/posix/eintr_wrapper.h"
@@ -8937,6 +9060,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
  
  constexpr size_t kReadBufferBytes = 64 * 1024;
  constexpr size_t kMaxCdpFrameBytes = 256 * 1024 * 1024;
++constexpr size_t kMaxParkedCommandsPerScope = 32;
 +constexpr int kAgentTargetResolveAttempts = 10;
 +
 +std::string OptionalString(const base::DictValue& dict,
@@ -8988,7 +9112,76 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
        on_disconnect_(std::move(on_disconnect)),
        ui_task_runner_(base::SequencedTaskRunner::GetCurrentDefault()),
        writer_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
-@@ -101,7 +155,9 @@
+@@ -97,11 +152,78 @@
+   outgoing_filter_ = std::move(filter);
+ }
+ 
++void SteadBrainCdpBridge::SetActiveTurn(
++    const std::string& session_id,
++    mojom::BrainPermissionMode permission_mode) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  active_session_id_ = session_id;
++  active_permission_mode_ = permission_mode;
++}
++
++void SteadBrainCdpBridge::ClearActiveTurn(const std::string& session_id) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (active_session_id_ != session_id) {
++    return;
++  }
++  active_session_id_.clear();
++  active_permission_mode_ = mojom::BrainPermissionMode::kRead;
++}
++
++base::WeakPtr<SteadBrainCdpBridge> SteadBrainCdpBridge::GetWeakPtr() {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  return weak_factory_.GetWeakPtr();
++}
++
++void SteadBrainCdpBridge::ResolveCdpConfirmation(
++    int32_t action_id,
++    SteadAgentControlService::CdpConfirmationOutcome outcome) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  auto parked = parked_commands_.find(action_id);
++  if (parked == parked_commands_.end()) {
++    return;
++  }
++  std::vector<std::string> messages = std::move(parked->second);
++  parked_commands_.erase(parked);
++
++  for (std::string& message : messages) {
++    std::optional<base::DictValue> parsed =
++        base::JSONReader::ReadDict(message, base::JSON_PARSE_RFC);
++    if (!parsed) {
++      continue;
++    }
++    if (outcome ==
++        SteadAgentControlService::CdpConfirmationOutcome::kApproved) {
++      const std::string* method = parsed->FindString("method");
++      if (method) {
++        RememberAllowedCommand(*method, *parsed,
++                               TargetsSteadwrightWorld(*method, *parsed));
++      }
++      if (browser_target_ && !shutting_down_) {
++        browser_target_->DispatchProtocolMessage(this,
++                                                  base::as_byte_span(message));
++      }
++      continue;
++    }
++
++    const char* error_message = "stead: denied by user";
++    if (outcome ==
++        SteadAgentControlService::CdpConfirmationOutcome::kTimedOut) {
++      error_message = "stead: confirmation timed out";
++    } else if (outcome ==
++               SteadAgentControlService::CdpConfirmationOutcome::kCancelled) {
++      error_message = "stead: cancelled";
++    }
++    QueueError(*parsed, -32000, error_message);
++  }
++}
++
+ void SteadBrainCdpBridge::DispatchProtocolMessage(
      content::DevToolsAgentHost* agent_host,
      base::span<const uint8_t> message) {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -8999,7 +9192,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
  }
  
  void SteadBrainCdpBridge::AgentHostClosed(
-@@ -213,32 +269,437 @@
+@@ -213,32 +335,458 @@
  
    std::optional<base::DictValue> parsed =
        base::JSONReader::ReadDict(message, base::JSON_PARSE_RFC);
@@ -9008,23 +9201,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
      const std::string* method = parsed->FindString("method");
 -    if (method) {
 -      std::optional<std::string> reason = outgoing_filter_.Run(*method, *parsed);
-+    if (method && base::StartsWith(*method, "Stead.")) {
-+      HandleSteadMethod(*method, *parsed);
-+      return;
-+    }
-+    if (method && parsed->FindString("sessionId") &&
-+        !outgoing_filter_.is_null()) {
-+      const std::optional<int32_t> tab_id =
-+          ResolveTabIdForSession(*parsed->FindString("sessionId"));
-+      const std::optional<bool> targets_steadwright_world =
-+          TargetsSteadwrightWorld(*method, *parsed);
-+      std::optional<std::string> reason;
-+      if (!SessionTargetsAgentOwnedTarget(
-+              *parsed->FindString("sessionId"))) {
-+        reason = outgoing_filter_.Run(*method, *parsed, tab_id.value_or(0),
-+                                      targets_steadwright_world);
-+      }
-       if (reason) {
+-      if (reason) {
 -        base::DictValue response;
 -        const base::Value* id = parsed->Find("id");
 -        response.Set("id", id ? id->Clone() : base::Value());
@@ -9038,9 +9215,36 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
 -        QueueWrite(base::WriteJson(response).value_or(
 -            "{\"id\":null,\"error\":{\"code\":-32000,"
 -            "\"message\":\"stead: policy denied command\"}}"));
-+        QueueError(*parsed, -32000, "stead: " + *reason);
++    if (method && base::StartsWith(*method, "Stead.")) {
++      HandleSteadMethod(*method, *parsed);
++      return;
++    }
++    if (method && parsed->FindString("sessionId") &&
++        !outgoing_filter_.is_null()) {
++      const std::optional<int32_t> tab_id =
++          ResolveTabIdForSession(*parsed->FindString("sessionId"));
++      const std::optional<bool> targets_steadwright_world =
++          TargetsSteadwrightWorld(*method, *parsed);
++      SteadAgentControlService::CdpCommandFilterResult filter_result{
++          SteadAgentControlService::CdpCommandDisposition::kAllow, 0, {}};
++      if (!SessionTargetsAgentOwnedTarget(
++              *parsed->FindString("sessionId"))) {
++        filter_result = outgoing_filter_.Run(
++            *method, *parsed, tab_id.value_or(0), targets_steadwright_world,
++            active_session_id_, active_permission_mode_);
++      }
++      if (filter_result.disposition ==
++          SteadAgentControlService::CdpCommandDisposition::kDeny) {
++        QueueError(*parsed, -32000, "stead: " + filter_result.reason);
          return;
        }
++      if (filter_result.disposition ==
++          SteadAgentControlService::CdpCommandDisposition::
++              kNeedsConfirmation) {
++        ParkCommand(filter_result.confirmation_action_id, *parsed,
++                    std::move(message));
++        return;
++      }
 +      RememberAllowedCommand(*method, *parsed, targets_steadwright_world);
 +    } else if (method) {
 +      // Browser-scoped commands have no flattened session and are outside the
@@ -9054,6 +9258,17 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
    browser_target_->DispatchProtocolMessage(this, base::as_byte_span(message));
  }
  
++void SteadBrainCdpBridge::ParkCommand(int32_t action_id,
++                                      const base::DictValue& request,
++                                      std::string message) {
++  std::vector<std::string>& parked = parked_commands_[action_id];
++  if (parked.size() >= kMaxParkedCommandsPerScope) {
++    QueueError(request, -32000, "stead: too many pending commands");
++    return;
++  }
++  parked.push_back(std::move(message));
++}
++
 +bool SteadBrainCdpBridge::HandleSteadMethod(
 +    std::string_view method,
 +    const base::DictValue& message) {
@@ -9456,10 +9671,12 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
 Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h	2026-09-09 00:36:31.948523983 -0700
-+++ src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h	2026-09-09 04:35:59.343142024 -0700
-@@ -11,8 +11,11 @@
++++ src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h	2026-09-09 20:57:50.662663207 -0700
+@@ -10,14 +10,19 @@
+ #include <optional>
  #include <string>
  #include <string_view>
++#include <vector>
  
 +#include "base/containers/flat_map.h"
 +#include "base/containers/flat_set.h"
@@ -9469,7 +9686,13 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
  #include "base/memory/scoped_refptr.h"
  #include "base/memory/weak_ptr.h"
  #include "base/task/sequenced_task_runner.h"
-@@ -26,8 +29,11 @@
+ #include "base/sequence_checker.h"
+ #include "base/values.h"
++#include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
+ #include "content/public/browser/devtools_agent_host_client.h"
+ 
+ namespace base {
+@@ -26,19 +31,28 @@
  
  namespace content {
  class DevToolsAgentHost;
@@ -9481,14 +9704,19 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
  namespace stead {
  
  // Bridges ASCIIZ-framed CDP messages between the browser target and the
-@@ -36,9 +42,12 @@
+ // stead-brain helper. This object is created and destroyed on the UI sequence.
+ class SteadBrainCdpBridge : public content::DevToolsAgentHostClient {
   public:
-   using OutgoingFilter = base::RepeatingCallback<std::optional<std::string>(
+-  using OutgoingFilter = base::RepeatingCallback<std::optional<std::string>(
++  using OutgoingFilter = base::RepeatingCallback<
++      SteadAgentControlService::CdpCommandFilterResult(
        std::string_view method,
 -      const base::DictValue& message)>;
 +      const base::DictValue& message,
 +      int32_t tab_id,
-+      std::optional<bool> targets_steadwright_world)>;
++      std::optional<bool> targets_steadwright_world,
++      const std::string& session_id,
++      mojom::BrainPermissionMode permission_mode)>;
  
 -  SteadBrainCdpBridge(base::ScopedFD read_fd,
 +  SteadBrainCdpBridge(Profile* profile,
@@ -9496,7 +9724,21 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
                        base::ScopedFD write_fd,
                        base::OnceClosure on_disconnect);
    SteadBrainCdpBridge(const SteadBrainCdpBridge&) = delete;
-@@ -83,9 +92,29 @@
+@@ -49,6 +63,13 @@
+ 
+   // Installs the Phase 6 policy hook. A null callback allows every command.
+   void SetOutgoingFilter(OutgoingFilter filter);
++  void SetActiveTurn(const std::string& session_id,
++                     mojom::BrainPermissionMode permission_mode);
++  void ClearActiveTurn(const std::string& session_id);
++  base::WeakPtr<SteadBrainCdpBridge> GetWeakPtr();
++  void ResolveCdpConfirmation(
++      int32_t action_id,
++      SteadAgentControlService::CdpConfirmationOutcome outcome);
+ 
+   // content::DevToolsAgentHostClient:
+   void DispatchProtocolMessage(
+@@ -83,9 +104,32 @@
        base::WeakPtr<SteadBrainCdpBridge> weak_bridge);
  
    void HandleIncomingMessage(std::string message);
@@ -9511,6 +9753,9 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
 +  void QueueError(const base::DictValue& request,
 +                  int code,
 +                  std::string message);
++  void ParkCommand(int32_t action_id,
++                   const base::DictValue& request,
++                   std::string message);
 +  std::optional<int32_t> ResolveTabIdForTarget(
 +      std::string_view target_id) const;
 +  std::optional<int32_t> ResolveTabIdForSession(
@@ -9526,7 +9771,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
    scoped_refptr<content::DevToolsAgentHost> browser_target_;
    // Deleted on the writer sequence, after every queued write.
    std::unique_ptr<Writer, base::OnTaskRunnerDeleter> writer_;
-@@ -93,6 +122,20 @@
+@@ -93,6 +137,24 @@
    OutgoingFilter outgoing_filter_;
    scoped_refptr<base::SequencedTaskRunner> ui_task_runner_;
    scoped_refptr<base::SequencedTaskRunner> writer_task_runner_;
@@ -9544,13 +9789,17 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
 +  base::flat_map<std::string, bool> pending_runtime_results_;
 +  base::flat_set<std::string> pending_agent_target_creations_;
 +  base::flat_set<std::string> agent_owned_target_ids_;
++  base::flat_map<int32_t, std::vector<std::string>> parked_commands_;
++  std::string active_session_id_;
++  mojom::BrainPermissionMode active_permission_mode_ =
++      mojom::BrainPermissionMode::kRead;
    bool shutting_down_ = false;
  
    SEQUENCE_CHECKER(sequence_checker_);
 Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
 ===================================================================
 --- src.orig/chrome/browser/ui/stead/brain/stead_brain_service.cc	2026-09-09 00:36:31.949141446 -0700
-+++ src/chrome/browser/ui/stead/brain/stead_brain_service.cc	2026-09-09 04:15:54.378139049 -0700
++++ src/chrome/browser/ui/stead/brain/stead_brain_service.cc	2026-09-09 20:59:11.662912521 -0700
 @@ -13,7 +13,6 @@
  #include <utility>
  #include <vector>
@@ -9861,7 +10110,43 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
  }
  
  const char* PermissionModeToProtocolString(
-@@ -732,9 +472,24 @@
+@@ -478,6 +218,15 @@
+   profile_->GetPrefs()->SetString(kLastPermissionModePref,
+                                   PermissionModeToProtocolString(permission_mode));
+   session_permission_modes_[session_id] = permission_mode;
++  std::string start_error;
++  if (!EnsureStarted(&start_error)) {
++    std::move(callback).Run(MakeResult(false, request_id, "brain_unavailable",
++                                       std::move(start_error)));
++    return;
++  }
++  if (cdp_bridge_) {
++    cdp_bridge_->SetActiveTurn(session_id, permission_mode);
++  }
+   if (!tab_contexts.empty()) {
+     base::ListValue tabs;
+     for (const auto& tab_context : tab_contexts) {
+@@ -496,6 +245,9 @@
+     request.Set("model", std::move(selection));
+   }
+   mojom::BrainResultPtr result = SendRequest(std::move(request));
++  if (!result->ok && cdp_bridge_) {
++    cdp_bridge_->ClearActiveTurn(session_id);
++  }
+   if (result->ok) {
+     // Local lifecycle event: every WebUI surface attached to this profile can
+     // create the same live turn immediately, without polling session storage.
+@@ -533,6 +285,9 @@
+   const std::string request_id = NextRequestId();
+   base::DictValue request = MakeRequest("cancel_turn", request_id);
+   request.Set("session_id", session_id);
++  if (cdp_bridge_) {
++    cdp_bridge_->ClearActiveTurn(session_id);
++  }
+   std::move(callback).Run(SendRequest(std::move(request)));
+ }
+ 
+@@ -732,9 +487,34 @@
    stdin_write_ = std::move(parent_stdin);
    if (kSteadEnableCdpBridge) {
      cdp_bridge_ = std::make_unique<SteadBrainCdpBridge>(
@@ -9872,22 +10157,42 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
 +    cdp_bridge_->SetOutgoingFilter(base::BindRepeating(
 +        [](Profile* profile, std::string_view method,
 +           const base::DictValue&, int32_t tab_id,
-+           std::optional<bool> targets_steadwright_world)
-+            -> std::optional<std::string> {
++           std::optional<bool> targets_steadwright_world,
++           const std::string& session_id,
++           mojom::BrainPermissionMode permission_mode)
++            -> SteadAgentControlService::CdpCommandFilterResult {
 +          SteadAgentControlService* control =
 +              profile ? SteadAgentControlServiceFactory::GetForProfile(profile)
 +                      : nullptr;
 +          if (!control) {
-+            return "policy denied command";
++            return {SteadAgentControlService::CdpCommandDisposition::kDeny, 0,
++                    "policy denied command"};
 +          }
 +          return control->FilterCdpCommand(tab_id, method,
-+                                           targets_steadwright_world);
++                                           targets_steadwright_world,
++                                           session_id, permission_mode);
 +        },
 +        profile_));
++    if (SteadAgentControlService* control =
++            SteadAgentControlServiceFactory::GetForProfile(profile_)) {
++      control->SetCdpConfirmationResolver(base::BindRepeating(
++          &SteadBrainCdpBridge::ResolveCdpConfirmation,
++          cdp_bridge_->GetWeakPtr()));
++    }
    }
    initialized_ = false;
  
-@@ -909,9 +664,9 @@
+@@ -901,6 +681,9 @@
+       active_turn_events_.insert_or_assign(out->session_id, out.Clone());
+     } else if (out->type == "assistant_done" || out->type == "error") {
+       active_turn_events_.erase(out->session_id);
++      if (cdp_bridge_) {
++        cdp_bridge_->ClearActiveTurn(out->session_id);
++      }
+     }
+   }
+   for (auto& observer : observers_) {
+@@ -909,9 +692,9 @@
  }
  
  void SteadBrainService::HandleToolCall(const base::DictValue& event) {
@@ -9900,7 +10205,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
    if (session_id.empty() || tool_call_id.empty()) {
      return;
    }
-@@ -919,6 +674,14 @@
+@@ -919,6 +702,14 @@
      pending_user_prompts_.insert(UserPromptKey(session_id, tool_call_id));
      return;
    }
@@ -9915,7 +10220,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
    const base::DictValue* args = event.FindDict("arguments");
    base::DictValue empty_args;
    const base::DictValue& arguments = args ? *args : empty_args;
-@@ -931,561 +694,42 @@
+@@ -931,561 +722,42 @@
                    "Browser control service is not available.");
      return;
    }
@@ -10491,7 +10796,7 @@ Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
                 mojom::ReadResultPtr result,
                 std::vector<mojom::CredentialRefPtr> credentials) {
                if (!service) {
-@@ -1502,63 +746,50 @@
+@@ -1502,63 +774,50 @@
                    list.Append(CredentialRefToDict(*credential));
                  }
                }
