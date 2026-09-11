@@ -1,3 +1,13 @@
+> **Superseded (2026-09-09).** The native AX perception/action layer, the
+> typed `AgentControl` primitives for page driving, and the QuickJS Playwright
+> shim described below were replaced by **steadwright**: a Rust
+> Playwright-compatible layer over the Chrome DevTools Protocol, using
+> Playwright's vendored injected script, bridged to the brain over fd 3/4 by
+> `SteadBrainService`. Ownership, the drive overlay, session-scoped approvals
+> (now keyed on CDP method), and the Vault credential broker survive. See
+> `stead-brain/docs/steadwright-plan.md` for the current contracts. Sections
+> 6–10 and the `AgentControl` interface listing here are historical.
+
 # Stead — Agent & Native Control Layer (design)
 
 > The #1 goal is **performance + a super-light footprint**. This is an

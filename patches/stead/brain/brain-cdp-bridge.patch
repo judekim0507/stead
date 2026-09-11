@@ -1,0 +1,530 @@
+Index: src/chrome/browser/ui/stead/brain/BUILD.gn
+===================================================================
+--- src.orig/chrome/browser/ui/stead/brain/BUILD.gn	2026-07-13 21:13:42.794384804 -0700
++++ src/chrome/browser/ui/stead/brain/BUILD.gn	2026-09-09 00:22:53.363205829 -0700
+@@ -15,6 +15,8 @@
+ 
+ source_set("brain") {
+   sources = [
++    "stead_brain_cdp_bridge.cc",
++    "stead_brain_cdp_bridge.h",
+     "stead_brain_service.cc",
+     "stead_brain_service.h",
+     "stead_brain_service_factory.cc",
+Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.cc	2026-09-09 00:36:31.948818985 -0700
+@@ -0,0 +1,265 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h"
++
++#include <unistd.h>
++
++#include <cstddef>
++#include <string>
++#include <utility>
++
++#include "base/containers/span.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/posix/eintr_wrapper.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/single_thread_task_runner.h"
++#include "base/task/task_traits.h"
++#include "base/task/thread_pool.h"
++#include "content/public/browser/devtools_agent_host.h"
++
++namespace stead {
++namespace {
++
++constexpr size_t kReadBufferBytes = 64 * 1024;
++constexpr size_t kMaxCdpFrameBytes = 256 * 1024 * 1024;
++
++}  // namespace
++
++SteadBrainCdpBridge::SteadBrainCdpBridge(
++    base::ScopedFD read_fd,
++    base::ScopedFD write_fd,
++    base::OnceClosure on_disconnect)
++    : writer_(nullptr, base::OnTaskRunnerDeleter(nullptr)),
++      on_disconnect_(std::move(on_disconnect)),
++      ui_task_runner_(base::SequencedTaskRunner::GetCurrentDefault()),
++      writer_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
++          {base::MayBlock(),
++           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  DCHECK(read_fd.is_valid());
++  DCHECK(write_fd.is_valid());
++  writer_ = std::unique_ptr<Writer, base::OnTaskRunnerDeleter>(
++      new Writer(std::move(write_fd)),
++      base::OnTaskRunnerDeleter(writer_task_runner_));
++
++  browser_target_ = content::DevToolsAgentHost::CreateForBrowser(
++      nullptr, content::DevToolsAgentHost::CreateServerSocketCallback());
++  if (!browser_target_->AttachClient(this)) {
++    browser_target_ = nullptr;
++    ui_task_runner_->PostTask(
++        FROM_HERE,
++        base::BindOnce(&SteadBrainCdpBridge::OnPipeDisconnected,
++                       weak_factory_.GetWeakPtr()));
++    return;
++  }
++
++  base::ThreadPool::PostTask(
++      FROM_HERE,
++      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
++      base::BindOnce(&SteadBrainCdpBridge::ReadLoop, std::move(read_fd),
++                     ui_task_runner_, weak_factory_.GetWeakPtr()));
++}
++
++SteadBrainCdpBridge::Writer::Writer(base::ScopedFD fd) : fd(std::move(fd)) {}
++
++SteadBrainCdpBridge::Writer::~Writer() = default;
++
++SteadBrainCdpBridge::~SteadBrainCdpBridge() {
++  Shutdown();
++}
++
++void SteadBrainCdpBridge::Shutdown() {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (shutting_down_) {
++    return;
++  }
++  shutting_down_ = true;
++
++  weak_factory_.InvalidateWeakPtrs();
++  on_disconnect_.Reset();
++  if (browser_target_) {
++    browser_target_->DetachClient(this);
++    browser_target_ = nullptr;
++  }
++  // Hands the write end to the writer sequence for deletion after any
++  // queued frames; the reader closes its own end when it observes EOF.
++  writer_.reset();
++  writer_task_runner_.reset();
++}
++
++void SteadBrainCdpBridge::SetOutgoingFilter(OutgoingFilter filter) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  outgoing_filter_ = std::move(filter);
++}
++
++void SteadBrainCdpBridge::DispatchProtocolMessage(
++    content::DevToolsAgentHost* agent_host,
++    base::span<const uint8_t> message) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  QueueWrite(std::string(message.begin(), message.end()));
++}
++
++void SteadBrainCdpBridge::AgentHostClosed(
++    content::DevToolsAgentHost* agent_host) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (browser_target_.get() == agent_host) {
++    browser_target_ = nullptr;
++  }
++  OnPipeDisconnected();
++}
++
++bool SteadBrainCdpBridge::IsTrusted() {
++  return true;
++}
++
++bool SteadBrainCdpBridge::MayAccessAllCookies() {
++  return true;
++}
++
++bool SteadBrainCdpBridge::AllowUnsafeOperations() {
++  return true;
++}
++
++bool SteadBrainCdpBridge::UsesBinaryProtocol() {
++  return false;
++}
++
++std::string SteadBrainCdpBridge::GetTypeForMetrics() {
++  return "RemoteDebugger";
++}
++
++// static
++void SteadBrainCdpBridge::ReadLoop(
++    base::ScopedFD read_fd,
++    scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
++    base::WeakPtr<SteadBrainCdpBridge> weak_bridge) {
++  std::string pending;
++  char buffer[kReadBufferBytes];
++
++  for (;;) {
++    const ssize_t bytes_read =
++        HANDLE_EINTR(read(read_fd.get(), buffer, sizeof(buffer)));
++    if (bytes_read <= 0) {
++      ui_task_runner->PostTask(
++          FROM_HERE,
++          base::BindOnce(&SteadBrainCdpBridge::OnPipeDisconnected,
++                         weak_bridge));
++      return;
++    }
++
++    const size_t previous_size = pending.size();
++    pending.append(buffer, static_cast<size_t>(bytes_read));
++
++    size_t frame_start = 0;
++    size_t search_from = previous_size;
++    for (;;) {
++      const size_t terminator = pending.find('\0', search_from);
++      if (terminator == std::string::npos) {
++        break;
++      }
++      if (terminator - frame_start > kMaxCdpFrameBytes) {
++        ui_task_runner->PostTask(
++            FROM_HERE,
++            base::BindOnce(&SteadBrainCdpBridge::OnPipeDisconnected,
++                           weak_bridge));
++        return;
++      }
++      ui_task_runner->PostTask(
++          FROM_HERE,
++          base::BindOnce(&SteadBrainCdpBridge::HandleIncomingMessage,
++                         weak_bridge,
++                         pending.substr(frame_start, terminator - frame_start)));
++      frame_start = terminator + 1;
++      search_from = frame_start;
++    }
++
++    if (frame_start != 0) {
++      pending.erase(0, frame_start);
++    }
++    if (pending.size() > kMaxCdpFrameBytes) {
++      ui_task_runner->PostTask(
++          FROM_HERE,
++          base::BindOnce(&SteadBrainCdpBridge::OnPipeDisconnected,
++                         weak_bridge));
++      return;
++    }
++  }
++}
++
++// static
++void SteadBrainCdpBridge::WriteFrame(
++    Writer* writer,
++    std::string framed_message,
++    scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
++    base::WeakPtr<SteadBrainCdpBridge> weak_bridge) {
++  if (!writer->fd.is_valid() ||
++      !base::WriteFileDescriptor(writer->fd.get(), framed_message)) {
++    ui_task_runner->PostTask(
++        FROM_HERE,
++        base::BindOnce(&SteadBrainCdpBridge::OnPipeDisconnected, weak_bridge));
++  }
++}
++
++void SteadBrainCdpBridge::HandleIncomingMessage(std::string message) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (!browser_target_ || shutting_down_) {
++    return;
++  }
++
++  std::optional<base::DictValue> parsed =
++      base::JSONReader::ReadDict(message, base::JSON_PARSE_RFC);
++  if (parsed && !outgoing_filter_.is_null()) {
++    const std::string* method = parsed->FindString("method");
++    if (method) {
++      std::optional<std::string> reason = outgoing_filter_.Run(*method, *parsed);
++      if (reason) {
++        base::DictValue response;
++        const base::Value* id = parsed->Find("id");
++        response.Set("id", id ? id->Clone() : base::Value());
++        if (const base::Value* session_id = parsed->Find("sessionId")) {
++          response.Set("sessionId", session_id->Clone());
++        }
++        base::DictValue error;
++        error.Set("code", -32000);
++        error.Set("message", "stead: " + *reason);
++        response.Set("error", std::move(error));
++        QueueWrite(base::WriteJson(response).value_or(
++            "{\"id\":null,\"error\":{\"code\":-32000,"
++            "\"message\":\"stead: policy denied command\"}}"));
++        return;
++      }
++    }
++  }
++
++  browser_target_->DispatchProtocolMessage(this, base::as_byte_span(message));
++}
++
++void SteadBrainCdpBridge::QueueWrite(std::string message) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (shutting_down_ || !writer_ || !writer_task_runner_) {
++    return;
++  }
++  message.push_back('\0');
++  // Unretained is safe: writer_ is deleted on this same sequence, after every
++  // task posted before Shutdown().
++  writer_task_runner_->PostTask(
++      FROM_HERE,
++      base::BindOnce(&SteadBrainCdpBridge::WriteFrame,
++                     base::Unretained(writer_.get()), std::move(message),
++                     ui_task_runner_, weak_factory_.GetWeakPtr()));
++}
++
++void SteadBrainCdpBridge::OnPipeDisconnected() {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (shutting_down_ || on_disconnect_.is_null()) {
++    return;
++  }
++  std::move(on_disconnect_).Run();
++}
++
++}  // namespace stead
+Index: src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ src/chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h	2026-09-09 00:36:31.948523983 -0700
+@@ -0,0 +1,104 @@
++// Copyright 2026 The Stead Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_CDP_BRIDGE_H_
++#define CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_CDP_BRIDGE_H_
++
++#include <cstdint>
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++
++#include "base/files/scoped_file.h"
++#include "base/functional/callback.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/sequence_checker.h"
++#include "base/values.h"
++#include "content/public/browser/devtools_agent_host_client.h"
++
++namespace base {
++class SequencedTaskRunner;
++}
++
++namespace content {
++class DevToolsAgentHost;
++}
++
++namespace stead {
++
++// Bridges ASCIIZ-framed CDP messages between the browser target and the
++// stead-brain helper. This object is created and destroyed on the UI sequence.
++class SteadBrainCdpBridge : public content::DevToolsAgentHostClient {
++ public:
++  using OutgoingFilter = base::RepeatingCallback<std::optional<std::string>(
++      std::string_view method,
++      const base::DictValue& message)>;
++
++  SteadBrainCdpBridge(base::ScopedFD read_fd,
++                      base::ScopedFD write_fd,
++                      base::OnceClosure on_disconnect);
++  SteadBrainCdpBridge(const SteadBrainCdpBridge&) = delete;
++  SteadBrainCdpBridge& operator=(const SteadBrainCdpBridge&) = delete;
++  ~SteadBrainCdpBridge() override;
++
++  void Shutdown();
++
++  // Installs the Phase 6 policy hook. A null callback allows every command.
++  void SetOutgoingFilter(OutgoingFilter filter);
++
++  // content::DevToolsAgentHostClient:
++  void DispatchProtocolMessage(
++      content::DevToolsAgentHost* agent_host,
++      base::span<const uint8_t> message) override;
++  void AgentHostClosed(content::DevToolsAgentHost* agent_host) override;
++  bool IsTrusted() override;
++  bool MayAccessAllCookies() override;
++  bool AllowUnsafeOperations() override;
++  bool UsesBinaryProtocol() override;
++  std::string GetTypeForMetrics() override;
++
++ private:
++  // Owns the write end for the lifetime of the writer sequence, so queued
++  // writes can never touch a reused fd number after Shutdown().
++  struct Writer {
++    explicit Writer(base::ScopedFD fd);
++    ~Writer();
++    base::ScopedFD fd;
++  };
++
++  // The reader owns the read end; it closes when the loop exits on EOF or
++  // error, which happens once the helper's write end goes away.
++  static void ReadLoop(
++      base::ScopedFD read_fd,
++      scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
++      base::WeakPtr<SteadBrainCdpBridge> weak_bridge);
++  static void WriteFrame(
++      Writer* writer,
++      std::string framed_message,
++      scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
++      base::WeakPtr<SteadBrainCdpBridge> weak_bridge);
++
++  void HandleIncomingMessage(std::string message);
++  void QueueWrite(std::string message);
++  void OnPipeDisconnected();
++
++  scoped_refptr<content::DevToolsAgentHost> browser_target_;
++  // Deleted on the writer sequence, after every queued write.
++  std::unique_ptr<Writer, base::OnTaskRunnerDeleter> writer_;
++  base::OnceClosure on_disconnect_;
++  OutgoingFilter outgoing_filter_;
++  scoped_refptr<base::SequencedTaskRunner> ui_task_runner_;
++  scoped_refptr<base::SequencedTaskRunner> writer_task_runner_;
++  bool shutting_down_ = false;
++
++  SEQUENCE_CHECKER(sequence_checker_);
++  base::WeakPtrFactory<SteadBrainCdpBridge> weak_factory_{this};
++};
++
++}  // namespace stead
++
++#endif  // CHROME_BROWSER_UI_STEAD_BRAIN_STEAD_BRAIN_CDP_BRIDGE_H_
+Index: src/chrome/browser/ui/stead/brain/stead_brain_service.cc
+===================================================================
+--- src.orig/chrome/browser/ui/stead/brain/stead_brain_service.cc	2026-09-09 00:09:21.453843319 -0700
++++ src/chrome/browser/ui/stead/brain/stead_brain_service.cc	2026-09-09 00:36:31.949141446 -0700
+@@ -31,7 +31,9 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service.h"
+ #include "chrome/browser/ui/stead/agent_control/stead_agent_control_service_factory.h"
++#include "chrome/browser/ui/stead/brain/stead_brain_cdp_bridge.h"
+ #include "components/prefs/pref_service.h"
++#include "content/public/browser/devtools_agent_host.h"
+ #include "ui/gfx/geometry/point.h"
+ #include "ui/gfx/geometry/rect.h"
+ #include "url/gurl.h"
+@@ -45,6 +47,9 @@
+ constexpr size_t kMaxBrainImageBytes = 2 * 1024 * 1024;
+ constexpr char kLastPermissionModePref[] = "stead.last_permission_mode";
+ 
++// Flip this one-line gate off to launch the helper without the CDP transport.
++constexpr bool kSteadEnableCdpBridge = true;
++
+ std::string OptionalString(const base::DictValue& dict, std::string_view key) {
+   const std::string* value = dict.FindString(key);
+   return value ? *value : std::string();
+@@ -687,15 +692,31 @@
+   base::ScopedFD parent_stdin;
+   base::ScopedFD parent_stdout;
+   base::ScopedFD child_stdout;
++  base::ScopedFD child_cdp_read;
++  base::ScopedFD browser_cdp_write;
++  base::ScopedFD browser_cdp_read;
++  base::ScopedFD child_cdp_write;
+   if (!base::CreatePipe(&child_stdin, &parent_stdin) ||
+       !base::CreatePipe(&parent_stdout, &child_stdout)) {
+     *error_message = "Could not create stead-brain stdio pipes.";
+     return false;
+   }
++  if (kSteadEnableCdpBridge &&
++      (!base::CreatePipe(&child_cdp_read, &browser_cdp_write) ||
++       !base::CreatePipe(&browser_cdp_read, &child_cdp_write))) {
++    *error_message = "Could not create stead-brain CDP pipes.";
++    return false;
++  }
+ 
+   base::LaunchOptions options;
+   options.fds_to_remap.emplace_back(child_stdin.get(), STDIN_FILENO);
+   options.fds_to_remap.emplace_back(child_stdout.get(), STDOUT_FILENO);
++  if (kSteadEnableCdpBridge) {
++    options.fds_to_remap.emplace_back(
++        child_cdp_read.get(), content::DevToolsAgentHost::kReadFD);
++    options.fds_to_remap.emplace_back(
++        child_cdp_write.get(), content::DevToolsAgentHost::kWriteFD);
++  }
+ 
+   base::CommandLine command(helper);
+   process_ = base::LaunchProcess(command, options);
+@@ -706,7 +727,15 @@
+ 
+   child_stdin.reset();
+   child_stdout.reset();
++  child_cdp_read.reset();
++  child_cdp_write.reset();
+   stdin_write_ = std::move(parent_stdin);
++  if (kSteadEnableCdpBridge) {
++    cdp_bridge_ = std::make_unique<SteadBrainCdpBridge>(
++        std::move(browser_cdp_read), std::move(browser_cdp_write),
++        base::BindOnce(&SteadBrainService::OnCdpBridgeDisconnected,
++                       weak_factory_.GetWeakPtr()));
++  }
+   initialized_ = false;
+ 
+   scoped_refptr<base::SequencedTaskRunner> ui_task_runner =
+@@ -719,6 +748,7 @@
+ }
+ 
+ void SteadBrainService::StopHelper() {
++  cdp_bridge_.reset();
+   initialized_ = false;
+   last_ready_event_.reset();
+   active_turn_events_.clear();
+@@ -827,6 +857,7 @@
+ }
+ 
+ void SteadBrainService::OnBrainPipeClosed() {
++  cdp_bridge_.reset();
+   if (!process_.IsValid()) {
+     return;
+   }
+@@ -842,6 +873,20 @@
+   EmitEvent(event);
+ }
+ 
++void SteadBrainService::OnCdpBridgeDisconnected() {
++  LOG(WARNING) << "stead-brain CDP pipe disconnected";
++  // The bridge invokes this from its own method; destroy it from a fresh
++  // task rather than underneath its own stack frame.
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(
++                     [](base::WeakPtr<SteadBrainService> service) {
++                       if (service) {
++                         service->cdp_bridge_.reset();
++                       }
++                     },
++                     weak_factory_.GetWeakPtr()));
++}
++
+ void SteadBrainService::EmitEvent(const base::DictValue& event) {
+   auto out = mojom::BrainEvent::New();
+   out->type = OptionalString(event, "type");
+Index: src/chrome/browser/ui/stead/brain/stead_brain_service.h
+===================================================================
+--- src.orig/chrome/browser/ui/stead/brain/stead_brain_service.h	2026-07-16 23:48:27.798967257 -0700
++++ src/chrome/browser/ui/stead/brain/stead_brain_service.h	2026-09-09 00:22:53.420599670 -0700
+@@ -29,6 +29,8 @@
+ 
+ namespace stead {
+ 
++class SteadBrainCdpBridge;
++
+ class SteadBrainService : public KeyedService, public mojom::BrainConsole {
+  public:
+   explicit SteadBrainService(Profile* profile);
+@@ -103,6 +105,7 @@
+ 
+   void OnBrainLine(std::string line);
+   void OnBrainPipeClosed();
++  void OnCdpBridgeDisconnected();
+   void EmitEvent(const base::DictValue& event);
+   void HandleToolCall(const base::DictValue& event);
+   void SendToolResult(const std::string& session_id,
+@@ -130,6 +133,7 @@
+ 
+   base::Process process_;
+   base::ScopedFD stdin_write_;
++  std::unique_ptr<SteadBrainCdpBridge> cdp_bridge_;
+   bool initialized_ = false;
+   // Last "ready" event from the helper, replayed to observers that bind after
+   // initialization so late-opened surfaces still learn the skill catalog and
